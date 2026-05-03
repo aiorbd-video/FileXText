@@ -4,45 +4,59 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup
 )
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    CommandHandler,
+    filters,
+    ContextTypes
+)
 import os
+from openai import OpenAI
 
-BOT_TOKEN = "8779005756:AAGX69wd0FEvHgUbQfyp7ZOleCokHljS1Xw"
-CHANNEL_ID = -1001974697895
-ADMIN_ID = 7704103996
-FORCE_CHANNEL = "@itsmeratul"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+FORCE_CHANNEL = os.getenv("FORCE_CHANNEL")
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 user_files = []
-
-# 🧠 Keyword caption system
-def get_caption(file_name):
-    name = file_name.lower()
-
-    if "fb" in name:
-        return "📘 ফেসবুক সোসিয়াল প্যাক বাইপাস"
-    elif "yt" in name:
-        return "▶️ ইউটিউব সোসিয়াল প্যাক বাইপাস"
-    elif "tg" in name:
-        return "📢 টেলিগ্রাম সোসিয়াল প্যাক বাইপাস"
-    elif "wa" in name:
-        return "💬 WhatsApp সোসিয়াল প্যাক বাইপাস"
-    elif "insta" in name or "in" in name:
-        return "📸 Instagram সোসিয়াল প্যাক বাইপাস"
-    else:
-        return "🔥 New File"
 
 # 🎯 Join force check
 async def join_check(update, context):
     user_id = update.effective_user.id
+
     member = await context.bot.get_chat_member(FORCE_CHANNEL, user_id)
 
     if member.status in ["member", "administrator", "creator"]:
         return True
     else:
-        await update.message.reply_text("❌ আগে channel এ join করুন")
+        keyboard = [
+            [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL.replace('@','')}")]
+        ]
+        await update.message.reply_text(
+            "❌ আগে channel এ join করুন!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return False
 
-# 📥 Collect files (auto)
+# 🤖 AI caption (REAL GPT)
+def ai_caption(name):
+    try:
+        prompt = f"Create a short catchy Telegram caption for this file: {name}"
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        return response.choices[0].message.content
+
+    except:
+        return "🔥 New File Available"
+
+# 📥 Collect files
 async def collect(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global user_files
 
@@ -51,59 +65,63 @@ async def collect(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.message.document:
         file_id = update.message.document.file_id
-        file_name = update.message.document.file_name
+        file_name = update.message.document.file_name or "file"
 
         user_files.append((file_id, file_name))
+        await update.message.reply_text(f"✅ Added ({len(user_files)})")
 
-    # 📦 Auto post if 10 file collected
-    if len(user_files) >= 10:
-        await post_files(context)
-
-# 🚀 Post system
-async def post_files(context):
+# 🚀 POST
+async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global user_files
 
-    if not user_files:
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    # 🔘 Button
-    keyboard = [
-        [InlineKeyboardButton("📢 Join Channel", url="https://t.me/yourchannel")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    if not await join_check(update, context):
+        return
 
-    # 📝 Text
+    if not user_files:
+        await update.message.reply_text("❌ No files")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL.replace('@','')}")]
+    ]
+
     await context.bot.send_message(
         chat_id=CHANNEL_ID,
-        text="🔥 NEW FILES UPLOADED!\n👇 নিচে সব ফাইল দেওয়া আছে",
-        reply_markup=reply_markup
+        text=f"🔥 NEW FILE DROP!\n📦 Total: {len(user_files)}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-    # 📦 Batch system (50+ support)
-    batch = user_files[:50]
+    # 📦 batch send
+    for i in range(0, len(user_files), 10):
+        batch = user_files[i:i+10]
 
-    media = []
-    for i, (file_id, name) in enumerate(batch):
-        if i == 0:
-            media.append(InputMediaDocument(
-                media=file_id,
-                caption=get_caption(name)
-            ))
-        else:
-            media.append(InputMediaDocument(media=file_id))
+        media = []
+        for j, (file_id, name) in enumerate(batch):
+            if j == 0:
+                media.append(InputMediaDocument(
+                    media=file_id,
+                    caption=ai_caption(name)
+                ))
+            else:
+                media.append(InputMediaDocument(media=file_id))
 
-    # split into chunks of 10
-    for i in range(0, len(media), 10):
         await context.bot.send_media_group(
             chat_id=CHANNEL_ID,
-            media=media[i:i+10]
+            media=media
         )
 
     user_files = []
+    await update.message.reply_text("🚀 Posted!")
 
 # ▶️ Run
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(MessageHandler(filters.Document.ALL, collect))
+app.add_handler(CommandHandler("post", post_now))
+
+print("✅ Bot Running...")
 
 app.run_polling()
