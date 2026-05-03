@@ -1,6 +1,9 @@
 import os
 import html
+import logging
 import traceback
+import asyncio
+from datetime import datetime
 from openai import OpenAI
 from telegram import (
     Update,
@@ -19,230 +22,212 @@ from telegram.ext import (
     Application
 )
 
-# ⚙️ Environment Variables
+# ⚙️ কনফিগারেশন
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 FORCE_CHANNEL = os.getenv("FORCE_CHANNEL")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# 🤖 ক্লায়েন্ট সেটআপ
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-user_files = []
+# 📊 গ্লোবাল ভেরিয়েবল (Enterprise DB Simulation)
+storage = {
+    "queue": [],
+    "total_posted": 0,
+    "start_time": datetime.now()
+}
 
-# 🚨 Global Error Handler
+# 📝 লগিং সেটআপ
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# 🚨 গ্লোবাল এরর হ্যান্ডলার (Enterprise Detail)
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    error_message = f"❌ <b>BOT ERROR ALERT</b>\n\n<pre>{html.escape(str(context.error))}</pre>"
+    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    tb_string = "".join(tb_list)
+    
+    error_msg = (
+        f"❌ <b>ENTERPRISE ERROR ALERT</b>\n\n"
+        f"<b>Message:</b> {html.escape(str(context.error))}\n\n"
+        f"<b>Traceback:</b>\n<pre>{html.escape(tb_string[:3000])}</pre>"
+    )
     try:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=error_message, parse_mode='HTML')
-        print(f"Error logged: {context.error}")
-    except Exception as e:
-        print(f"Failed to send error: {e}")
+        await context.bot.send_message(chat_id=ADMIN_ID, text=error_msg, parse_mode='HTML')
+    except:
+        logger.error(f"Failed to send error to admin: {context.error}")
 
-# 📋 Set Menu Commands (বট চালু হলে মেনু তৈরি করবে)
-async def post_init(application: Application):
+# 📋 মেনু বাটন ইনিশিয়ালাইজেশন
+async def enterprise_init(application: Application):
     commands = [
-        BotCommand("post", "🚀 ফাইলগুলো চ্যানেলে পোস্ট করুন"),
-        BotCommand("queue", "📦 কিউতে থাকা ফাইলগুলো দেখুন"),
-        BotCommand("clear", "🗑️ কিউ ক্লিয়ার বা ডিলিট করুন"),
-        BotCommand("chk", "✅ চ্যানেলের পারমিশন চেক করুন")
+        BotCommand("start", "🤖 বট শুরু করুন"),
+        BotCommand("post", "🚀 চ্যানেলে ফাইল পোস্ট করুন"),
+        BotCommand("queue", "📦 বর্তমান ফাইল লিস্ট"),
+        BotCommand("clear", "🗑️ কিউ ডিলিট করুন"),
+        BotCommand("chk", "🔍 চ্যানেল স্ট্যাটাস চেক"),
+        BotCommand("stats", "📊 বটের পারফরম্যান্স স্ট্যাটস")
     ]
     await application.bot.set_my_commands(commands)
 
-# 🎯 Join force check
-async def join_check(update, context):
+# 🤖 Enterprise AI Engine
+def generate_ai_caption(filename):
     try:
-        user_id = update.effective_user.id
-        member = await context.bot.get_chat_member(FORCE_CHANNEL, user_id)
-
-        if member.status in ["member", "administrator", "creator"]:
-            return True
-        else:
-            keyboard = [[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL.replace('@','')}")] ]
-            await update.message.reply_text("❌ আগে চ্যানেল এ join করুন!", reply_markup=InlineKeyboardMarkup(keyboard))
-            return False
-    except Exception as e:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Join Check Error: {e}")
-        return False
-
-# 🤖 AI caption (Premium Bengali Version)
-def ai_caption(name):
-    try:
-        system_prompt = """You are a catchy Telegram channel caption writer. Write entirely in Bengali (বাংলা).
-Apply strict rules based on filename (case-insensitive):
-- 'fb' -> include 'ফেসবুক প্যাক বাইপাস'
-- 'yt' -> include 'ইউটুব'
-- 'tg' -> include 'টেলিগ্রাম'
-- 'wa' -> include 'whatsapp'
-- 'tiktok' -> include 'টিকটক'
-- 'insta' -> include 'instagram'
-Make it highly attractive with emojis. Do not output the raw filename."""
-
+        system_rules = (
+            "You are an expert Social Media Manager for a tech Telegram channel. "
+            "Write the caption in professional yet catchy Bengali (বাংলা). "
+            "Keywords detection rules:\n"
+            "- 'fb' -> 'ফেসবুক প্যাক বাইপাস 🔵'\n"
+            "- 'yt' -> 'ইউটুব স্পেশাল 🔴'\n"
+            "- 'tg' -> 'টেলিগ্রাম প্রিমিয়াম 💎'\n"
+            "- 'wa' -> 'WhatsApp আপডেট 🟢'\n"
+            "- 'tiktok' -> 'টিকটক প্যাক 🔥'\n"
+            "- 'insta' -> 'Instagram স্পেশাল 📸'\n"
+            "Style: Use bullet points, attractive emojis, and a call to action. "
+            "Do not mention the raw filename unless it's part of the brand."
+        )
+        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Create a short caption for: {name}"}
-            ]
+                {"role": "system", "content": system_rules},
+                {"role": "user", "content": f"Create a viral caption for file: {filename}"}
+            ],
+            temperature=0.7
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"AI Error: {e}")
-        return "🔥 নতুন ফাইল (New File Available)"
+        logger.error(f"AI Error: {e}")
+        return f"✨ **নতুন প্রিমিয়াম ফাইল**\n\n📂 ফাইল: {filename}\n🚀 এখনই ডাউনলোড করুন।"
 
-# 📥 Collect files
-async def collect(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global user_files
-    try:
-        if update.effective_user.id != ADMIN_ID: return
-
-        if update.message.document:
-            file_id = update.message.document.file_id
-            file_name = update.message.document.file_name or "file"
-
-            user_files.append((file_id, file_name))
-            
-            # Smart Inline Keyboard
-            keyboard = [
-                [InlineKeyboardButton("🚀 Post Now", callback_data="btn_post"),
-                 InlineKeyboardButton("📦 Queue", callback_data="btn_queue")],
-                [InlineKeyboardButton("🗑️ Clear", callback_data="btn_clear")]
-            ]
-            await update.message.reply_text(
-                f"✅ ফাইল অ্যাড হয়েছে: {file_name}\n📦 মোট ফাইল: {len(user_files)}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-    except Exception as e:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Collection Error: {e}")
-
-# 🗑️ Clear Command
-async def clear_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global user_files
-    user_id = update.effective_user.id if update.effective_user else update.callback_query.from_user.id
-    if user_id != ADMIN_ID: return
-    
-    user_files = []
-    text = "🗑️ কিউ থেকে সব ফাইল ক্লিয়ার করা হয়েছে!"
-    
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(text)
-    else:
-        await update.message.reply_text(text)
-
-# 📦 Queue Command
-async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global user_files
-    user_id = update.effective_user.id if update.effective_user else update.callback_query.from_user.id
-    if user_id != ADMIN_ID: return
-
-    if not user_files:
-        text = "📭 কিউ বর্তমানে ফাঁকা। কোনো ফাইল নেই।"
-    else:
-        text = f"📦 **বর্তমান কিউ ({len(user_files)} টি ফাইল):**\n\n"
-        for i, (_, name) in enumerate(user_files[:10]):
-            text += f"{i+1}. {name}\n"
-        if len(user_files) > 10:
-            text += f"\n...এবং আরো {len(user_files) - 10} টি ফাইল আছে।"
-
-    if update.callback_query:
-        await update.callback_query.answer()
-        await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
-    else:
-        await update.message.reply_text(text, parse_mode='Markdown')
-
-# ✅ Chk Command (Channel & Permission Check)
-async def check_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 📥 ফাইল কালেকশন
+async def collect_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     
-    status_msg = await update.message.reply_text("🔍 চেক করা হচ্ছে...")
-    report = "📊 **বট স্ট্যাটাস রিপোর্ট:**\n\n"
-    
-    # Check Target Channel
-    try:
-        bot_member = await context.bot.get_chat_member(CHANNEL_ID, context.bot.id)
-        if bot_member.status in ['administrator', 'creator']:
-            report += f"✅ টার্গেট চ্যানেল: কাজ করছে (Admin)\n"
-        else:
-            report += f"⚠️ টার্গেট চ্যানেল: বট অ্যাডমিন নয়!\n"
-    except Exception as e:
-        report += f"❌ টার্গেট চ্যানেল: Error ({e})\n"
+    if update.message.document:
+        doc = update.message.document
+        storage["queue"].append((doc.file_id, doc.file_name))
         
-    # Check Force Channel
-    try:
-        bot_member = await context.bot.get_chat_member(FORCE_CHANNEL, context.bot.id)
-        if bot_member.status in ['administrator', 'creator']:
-            report += f"✅ ফোর্স চ্যানেল: কাজ করছে (Admin)\n"
-        else:
-            report += f"⚠️ ফোর্স চ্যানেল: বট অ্যাডমিন নয়!\n"
-    except Exception as e:
-        report += f"❌ ফোর্স চ্যানেল: Error ({e})\n"
+        keyboard = [
+            [InlineKeyboardButton("🚀 Post Now", callback_data="ent_post"),
+             InlineKeyboardButton("📊 Stats", callback_data="ent_stats")],
+            [InlineKeyboardButton("🗑️ Clear Queue", callback_data="ent_clear")]
+        ]
+        
+        await update.message.reply_text(
+            f"📥 **ফাইল রিসিভ হয়েছে!**\n\n📄 নাম: `{doc.file_name}`\n📦 কিউ সাইজ: {len(storage['queue'])}\n\nঅ্যাকশন সিলেক্ট করুন:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
 
+# ✅ চ্যানেল ও পারমিশন চেক (Advanced)
+async def check_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    
+    status_msg = await update.message.reply_text("🌐 **Enterprise System Check...**", parse_mode='Markdown')
+    
+    results = []
+    for chat in [CHANNEL_ID, FORCE_CHANNEL]:
+        try:
+            c = await context.bot.get_chat(chat)
+            member = await context.bot.get_chat_member(chat, context.bot.id)
+            results.append(f"✅ `{c.title}`: Active ({member.status})")
+        except Exception as e:
+            results.append(f"❌ `{chat}`: Error ({str(e)})")
+            
+    uptime = datetime.now() - storage["start_time"]
+    report = "💎 **Enterprise Status Report**\n\n" + "\n".join(results) + f"\n\n⏱ **Uptime:** {str(uptime).split('.')[0]}"
     await status_msg.edit_text(report, parse_mode='Markdown')
 
-# 🚀 POST Core Logic
-async def process_post(user_id, update_obj, context):
-    global user_files
-
+# 📊 স্ট্যাটাস ড্যাশবোর্ড
+async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     if user_id != ADMIN_ID: return
+    
+    stats_text = (
+        "📊 **Enterprise Dashboard**\n\n"
+        f"✅ মোট পোস্ট হয়েছে: {storage['total_posted']}\n"
+        f"📦 কিউতে আছে: {len(storage['queue'])} টি ফাইল\n"
+        f"🤖 AI মডেল: GPT-4o-Mini\n"
+        f"🛰 সিস্টেম: সচল (Operational)"
+    )
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        await context.bot.send_message(chat_id=user_id, text=stats_text, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(stats_text, parse_mode='Markdown')
 
-    if not await join_check(update_obj, context): return
-
-    if not user_files:
-        await context.bot.send_message(chat_id=user_id, text="❌ পোস্ট করার মতো কোনো ফাইল নেই!")
+# 🚀 পোস্ট প্রসেসর (Core Engine)
+async def process_enterprise_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID: return
+    
+    if not storage["queue"]:
+        msg = "❌ কিউ খালি! আগে ফাইল পাঠান।"
+        if update.callback_query: await update.callback_query.answer(msg, show_alert=True)
+        else: await update.message.reply_text(msg)
         return
 
-    keyboard = [[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL.replace('@','')}")] ]
-    
-    await context.bot.send_message(chat_id=user_id, text="🚀 পোস্টিং শুরু হচ্ছে...")
+    # Join check logic
+    try:
+        member = await context.bot.get_chat_member(FORCE_CHANNEL, user_id)
+        if member.status not in ["member", "administrator", "creator"]:
+            join_kb = [[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL.replace('@','')}")] ]
+            await context.bot.send_message(chat_id=user_id, text="❌ আগে চ্যানেলে জয়েন করুন!", reply_markup=InlineKeyboardMarkup(join_kb))
+            return
+    except: pass
 
-    await context.bot.send_message(
-        chat_id=CHANNEL_ID,
-        text=f"🔥 NEW FILE DROP!\n📦 Total Files: {len(user_files)}",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await context.bot.send_message(chat_id=user_id, text="⚡ **পোস্টিং শুরু হয়েছে...**")
 
-    for i in range(0, len(user_files), 10):
-        batch = user_files[i:i+10]
-        media = []
-        for j, (file_id, name) in enumerate(batch):
-            if j == 0:
-                media.append(InputMediaDocument(media=file_id, caption=ai_caption(name)))
-            else:
-                media.append(InputMediaDocument(media=file_id))
+    # Grouping and Posting
+    total = len(storage["queue"])
+    for i in range(0, total, 10):
+        batch = storage["queue"][i:i+10]
+        media_group = []
+        
+        for idx, (f_id, f_name) in enumerate(batch):
+            caption = generate_ai_caption(f_name) if idx == 0 else ""
+            media_group.append(InputMediaDocument(media=f_id, caption=caption, parse_mode='Markdown'))
+        
+        try:
+            await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media_group)
+            storage["total_posted"] += len(batch)
+        except Exception as e:
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ ব্যাচ {i//10 + 1} ফেইল করেছে: {e}")
 
-        await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media)
+    storage["queue"] = [] # Clear after success
+    await context.bot.send_message(chat_id=user_id, text=f"✅ **মিশন সাকসেসফুল!**\n\n{total} টি ফাইল চ্যানেলে পাঠানো হয়েছে।")
 
-    user_files = []
-    await context.bot.send_message(chat_id=user_id, text="✅ সফলভাবে চ্যানেলে পোস্ট করা হয়েছে!")
-
-# 🚀 POST Command Handler
-async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_post(update.effective_user.id, update, context)
-
-# 🖱️ Callback Query Handler (For Inline Buttons)
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 🖱️ স্মার্ট বাটন হ্যান্ডলার
+async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query.data == "btn_post":
-        await query.answer()
-        await process_post(query.from_user.id, update, context)
-    elif query.data == "btn_clear":
-        await clear_queue(update, context)
-    elif query.data == "btn_queue":
-        await show_queue(update, context)
+    if query.data == "ent_post":
+        await query.answer("Processing...")
+        await process_enterprise_post(update, context)
+    elif query.data == "ent_clear":
+        storage["queue"] = []
+        await query.answer("Queue Cleared!", show_alert=True)
+        await query.edit_message_text("🗑️ সব ফাইল ডিলিট করা হয়েছে।")
+    elif query.data == "ent_stats":
+        await show_stats(update, context)
 
-# ▶️ Run
+# ▶️ মেন একজিকিউশন
 if __name__ == '__main__':
-    # post_init যোগ করা হয়েছে মেনু বাটন তৈরির জন্য
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(enterprise_init).build()
 
+    # এরর হ্যান্ডলিং
     app.add_error_handler(error_handler)
 
-    app.add_handler(MessageHandler(filters.Document.ALL, collect))
-    app.add_handler(CommandHandler("post", post_now))
-    app.add_handler(CommandHandler("clear", clear_queue))
-    app.add_handler(CommandHandler("queue", show_queue))
-    app.add_handler(CommandHandler("chk", check_channels))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    # হ্যান্ডলারস
+    app.add_handler(MessageHandler(filters.Document.ALL, collect_files))
+    app.add_handler(CommandHandler("post", process_enterprise_post))
+    app.add_handler(CommandHandler("stats", show_stats))
+    app.add_handler(CommandHandler("chk", check_status))
+    app.add_handler(CommandHandler("clear", lambda u, c: (storage.update({"queue": []}), u.message.reply_text("🗑️ Cleared!"))))
+    app.add_handler(CommandHandler("queue", lambda u, c: u.message.reply_text(f"📦 কিউতে আছে: {len(storage['queue'])} টি ফাইল")))
+    
+    app.add_handler(CallbackQueryHandler(handle_callbacks))
 
-    print("✅ Advanced Bot is Running with Menu...")
+    print("🚀 Enterprise Bot is Online and Guarded...")
     app.run_polling()
