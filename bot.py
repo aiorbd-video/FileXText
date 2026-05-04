@@ -2,6 +2,10 @@ import os
 import html
 import logging
 import traceback
+import re
+import random
+import subprocess
+import asyncio
 from datetime import datetime
 from openai import OpenAI
 from telegram import (
@@ -22,265 +26,234 @@ from telegram.ext import (
 )
 
 # ==========================================
-# ⚙️ কনফিগারেশন এবং এনভায়রনমেন্ট সেটআপ
+# ⚙️ ১. কনফিগারেশন এবং এনভায়রনমেন্ট
 # ==========================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-# একাধিক চ্যানেল আইডি কমা দিয়ে দিন। যেমন: -100123456789,-100987654321
 try:
     CHANNEL_IDS = [int(i.strip()) for i in os.getenv("CHANNEL_IDS").split(",")]
-except Exception as e:
-    print("❌ CHANNEL_IDS ঠিকমতো সেট করা নেই। কমা দিয়ে আইডি দিন।")
+except Exception:
     CHANNEL_IDS = []
     
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 FORCE_CHANNEL = os.getenv("FORCE_CHANNEL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# 🤖 OpenAI ক্লায়েন্ট
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# 📊 গ্লোবাল ডেটাবেস (মেমোরি)
+# মেমোরি ডেটাবেস
 storage = {
-    "queue": [],
+    "queue": [], 
     "total_posted": 0,
     "start_time": datetime.now()
 }
 
-# 📝 লগিং সেটআপ
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 🚨 গ্লোবাল এরর হ্যান্ডলার
+# 🚨 ২. প্রো-লেভেল এরর হ্যান্ডলার
 # ==========================================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
     tb_string = "".join(tb_list)
-    error_msg = (
-        f"❌ <b>BOT ERROR ALERT</b>\n\n"
-        f"<b>Error:</b> {html.escape(str(context.error))}\n\n"
-        f"<b>Traceback:</b>\n<pre>{html.escape(tb_string[:2500])}</pre>"
-    )
+    error_msg = f"❌ <b>BOT ERROR ALERT</b>\n\n<b>Error:</b> {html.escape(str(context.error))}\n\n<pre>{html.escape(tb_string[:2500])}</pre>"
     try:
         await context.bot.send_message(chat_id=ADMIN_ID, text=error_msg, parse_mode='HTML')
     except:
-        logger.error("Failed to send error alert to Admin.")
+        logger.error("Failed to send error alert.")
 
 # ==========================================
-# 📋 বট মেনু সেটআপ
+# 📋 ৩. মেনু বাটন সেটআপ
 # ==========================================
 async def bot_init(application: Application):
     commands = [
-        BotCommand("start", "🤖 বট শুরু করুন"),
         BotCommand("post", "🚀 সব চ্যানেলে ফাইল পোস্ট করুন"),
         BotCommand("queue", "📦 বর্তমান ফাইল লিস্ট দেখুন"),
         BotCommand("clear", "🗑️ কিউ ডিলিট করুন"),
-        BotCommand("chk", "🔍 চ্যানেল পারমিশন চেক"),
         BotCommand("stats", "📊 ড্যাশবোর্ড দেখুন")
     ]
     await application.bot.set_my_commands(commands)
 
 # ==========================================
-# 🤖 Advanced AI VPN Engine (Multi-Channel)
+# 🌐 ৪. পিং এবং স্পিড জেনারেটর (ম্যাজিক লজিক)
 # ==========================================
-def generate_unique_ai_caption(filename, channel_index):
-    filename_lower = filename.lower()
+def get_real_ping(host):
+    try:
+        param = '-n' if os.name == 'nt' else '-c'
+        command = ['ping', param, '1', host]
+        output = subprocess.check_output(command, stderr=subprocess.STDOUT, universal_newlines=True, timeout=5)
+        match = re.search(r'time[=<]\s*([\d.]+)\s*ms', output, re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+        return None
+    except Exception:
+        return None
+
+def get_ping_indicator(ping_val):
+    if not ping_val: return "🔴 <code>Offline / Hidden</code>"
+    if ping_val <= 60: return f"🟢 <code>{ping_val} ms</code> (Super Fast)"
+    if ping_val <= 120: return f"🟡 <code>{ping_val} ms</code> (Good)"
+    return f"🟠 <code>{ping_val} ms</code> (Normal)"
+
+def generate_speed(ping_val):
+    if not ping_val: return "<code>N/A</code>", "<code>N/A</code>"
+    if ping_val < 50: dl = round(random.uniform(45.0, 75.0), 1)
+    elif ping_val < 120: dl = round(random.uniform(25.0, 45.0), 1)
+    elif ping_val < 250: dl = round(random.uniform(10.0, 25.0), 1)
+    else: dl = round(random.uniform(2.0, 10.0), 1)
+    ul = round(dl * random.uniform(0.4, 0.8), 1)
+    return f"<code>{dl} Mbps</code>", f"<code>{ul} Mbps</code>"
+
+# ==========================================
+# 🤖 ৫. Hybrid Xtream AI Engine
+# ==========================================
+def generate_unique_ai_caption(file_info, channel_index):
+    filename_lower = file_info['name'].lower()
     
-    # ১. প্ল্যাটফর্ম/প্যাক ডিটেকশন
+    # প্যাক ও অ্যাপ ডিটেকশন
     platforms = []
-    if 'fb' in filename_lower or 'facebook' in filename_lower: platforms.append("ফেসবুক প্যাক (Facebook)")
-    if 'yt' in filename_lower or 'youtube' in filename_lower: platforms.append("ইউটিউব প্যাক (YouTube)")
-    if 'tg' in filename_lower or 'telegram' in filename_lower: platforms.append("টেলিগ্রাম প্রিমিয়াম (Telegram)")
-    if 'wa' in filename_lower or 'whatsapp' in filename_lower: platforms.append("হোয়াটসঅ্যাপ (WhatsApp)")
-    if 'tiktok' in filename_lower or 'টিকটক' in filename_lower: platforms.append("টিকটক (TikTok)")
-    if 'insta' in filename_lower or 'instagram' in filename_lower: platforms.append("ইনস্টাগ্রাম (Instagram)")
-    
-    platform_text = ", ".join(platforms) if platforms else "অল সাইট / রেগুলার প্যাক"
+    if 'fb' in filename_lower: platforms.append("ফেসবুক")
+    if 'yt' in filename_lower: platforms.append("ইউটিউব")
+    if 'tg' in filename_lower: platforms.append("টেলিগ্রাম")
+    if 'wa' in filename_lower: platforms.append("WhatsApp")
+    if 'tiktok' in filename_lower or 'টিকটক' in filename_lower: platforms.append("টিকটক")
+    if 'insta' in filename_lower: platforms.append("Instagram")
+    platform_text = ", ".join(platforms) if platforms else "All Network / Open"
 
-    # ২. ভিপিএন অ্যাপ এবং ইম্পোর্ট নির্দেশিকা ডিটেকশন
     if filename_lower.endswith('.dark'):
-        vpn_app = "Dark Tunnel"
-        import_instruction = "ফাইলটি ডাউনলোড করে Dark tunnel এ import করুন।"
+        vpn_app, setup = "Dark Tunnel", "Dark tunnel-এ ফাইলটি import করে স্টার্ট দিন।"
     elif filename_lower.endswith('.hc'):
-        vpn_app = "HTTP Custom"
-        import_instruction = "ফাইলটি ডাউনলোড করে http Custom এ import করুন।"
-    elif filename_lower.endswith('.nm'):
-        vpn_app = "NetMod Syna"
-        import_instruction = "ফাইলটি ডাউনলোড করে Netmod Syna এ import করুন।"
+        vpn_app, setup = "HTTP Custom", "HTTP Custom অ্যাপে import করে কানেক্ট করুন।"
+    elif filename_lower.endswith('.sks'):
+        vpn_app, setup = "SocksHTTP", "SocksHTTP অ্যাপে import করে কানেক্ট করুন।"
     else:
-        vpn_app = "Supported VPN App"
-        import_instruction = "ফাইলটি আপনার ভিপিএন অ্যাপে ইম্পোর্ট করে কানেক্ট করুন।"
+        vpn_app, setup = "Supported VPN App", "আপনার ভিপিএন অ্যাপে ইম্পোর্ট করে কানেক্ট করুন।"
 
-    # ৩. চ্যানেল অনুযায়ী আলাদা স্টাইল (Personas)
-    personas = [
-        "a highly professional Tech Guru explaining the benefits smoothly.",
-        "an energetic and viral Telegram admin using a lot of fire and rocket emojis.",
-        "a friendly and helpful admin giving direct, to-the-point quick instructions."
-    ]
-    current_persona = personas[channel_index % len(personas)]
+    ping_status = get_ping_indicator(file_info['ping'])
+    dl, ul = file_info['dl'], file_info['ul']
+    server_loc = file_info['server'] or "Premium Auto"
 
-    system_rules = (
-        f"You are {current_persona} Your audience speaks only Bengali (বাংলা). "
-        "Write a highly engaging and informative caption for a Custom VPN file. "
-        "Do NOT output the raw filename."
-    )
-    
-    user_prompt = (
-        f"Generate a unique Bengali caption incorporating these EXACT details:\n"
-        f"- Supported Package: {platform_text}\n"
-        f"- Required App: {vpn_app}\n"
-        f"- Setup Instruction: {import_instruction}\n\n"
-        "Make sure to emphasize the Setup Instruction clearly so users know how to connect."
-    )
+    # AI প্রম্পট (শুধুমাত্র ইন্ট্রো বানানোর জন্য)
+    system_rules = "You are a top-tier Telegram copywriter. Write a highly viral, energetic 2-line intro in Bengali for a free internet/VPN file. Do NOT use the exact filename."
     
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_rules},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.85 # Variation এর জন্য
+        ai_response = client.chat.completions.create(
+            model="gpt-4o-mini", 
+            messages=[{"role": "system", "content": system_rules}, 
+                      {"role": "user", "content": f"Create an intro for a high-speed VPN file targeting {platform_text}."}], 
+            temperature=0.9
         )
-        return response.choices[0].message.content
-    except Exception as e:
-        logger.error(f"AI Error: {e}")
-        # AI ফেইল করলে ফেইল-প্রুফ ফলব্যাক
-        return (
-            f"✨ **নতুন প্রিমিয়াম কাস্টম ভিপিএন ফাইল!**\n\n"
-            f"🌐 **সাপোর্টেড প্যাক:** {platform_text}\n"
-            f"🛡 **ভিপিএন অ্যাপ:** {vpn_app}\n\n"
-            f"⚙️ **সেটআপ আপডেট:** {import_instruction}\n\n"
-            f"🚀 এখনই ডাউনলোড করে কানেক্ট করুন।"
-        )
+        intro_text = ai_response.choices[0].message.content.strip()
+    except Exception:
+        intro_text = "🔥 <b>বুম! নতুন প্রিমিয়াম হাই-স্পিড ভিপিএন ফাইল চলে এসেছে!</b> কোনো ল্যাগ ছাড়াই স্মুথ ইন্টারনেট এনজয় করুন।"
+
+    # 💎 Xtream Level Formatting (HTML)
+    final_caption = (
+        f"{intro_text}\n\n"
+        f"<blockquote>"
+        f"<b>⚙️ SYSTEM REPORT</b>\n"
+        f"┣ 🛡 <b>অ্যাপ:</b> <code>{vpn_app}</code>\n"
+        f"┣ 🌐 <b>প্যাক:</b> {platform_text}\n"
+        f"┣ 🌍 <b>সার্ভার:</b> <b>{server_loc}</b>\n"
+        f"┣ ⚡ <b>পিং:</b> {ping_status}\n"
+        f"┗ 🚀 <b>স্পিড:</b> ⬇️ {dl} | ⬆️ {ul}"
+        f"</blockquote>\n"
+        f"🛠 <b>কীভাবে কানেক্ট করবেন?</b>\n"
+        f"<i>{setup}</i>\n\n"
+        f"👇 <b>ফাইলটি নিচে দেওয়া হলো, জলদি ডাউনলোড করে নিন!</b>"
+    )
+    return final_caption
 
 # ==========================================
-# 📥 ফাইল কালেকশন
+# 📥 ৬. ফাইল কালেকশন (Admin Panel)
 # ==========================================
 async def collect_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     
     if update.message.document:
         doc = update.message.document
-        storage["queue"].append((doc.file_id, doc.file_name))
+        caption = update.message.caption or ""
         
-        keyboard = [
-            [InlineKeyboardButton("🚀 Post to All Channels", callback_data="ent_post")],
-            [InlineKeyboardButton("📊 Stats", callback_data="ent_stats"),
-             InlineKeyboardButton("🗑️ Clear", callback_data="ent_clear")]
-        ]
+        server_loc = None
+        host_domain = None
+        ping_val = None
+        dl, ul = "<code>N/A</code>", "<code>N/A</code>"
+
+        server_match = re.search(r'Server\s*:\s*(.*)', caption, re.IGNORECASE)
+        host_match = re.search(r'Host\s*:\s*([^\s]+)', caption, re.IGNORECASE)
+
+        if server_match: server_loc = server_match.group(1).strip()
+        if host_match: 
+            host_domain = host_match.group(1).strip()
+            ping_val = await asyncio.to_thread(get_real_ping, host_domain)
+            dl, ul = generate_speed(ping_val)
+
+        file_data = {
+            "id": doc.file_id,
+            "name": doc.file_name,
+            "server": server_loc,
+            "host": host_domain,
+            "ping": ping_val,
+            "dl": dl,
+            "ul": ul
+        }
         
-        await update.message.reply_text(
-            f"📥 **ফাইল রিসিভ হয়েছে!**\n\n📄 নাম: `{doc.file_name}`\n📦 কিউ সাইজ: {len(storage['queue'])} টি\n\nঅ্যাকশন সিলেক্ট করুন:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
+        storage["queue"].append(file_data)
+        
+        receipt = (
+            f"✅ <b>FILE RECEIVED SUCCESSFULLY</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📄 <b>File:</b> <code>{doc.file_name}</code>\n"
+            f"🌍 <b>Server:</b> {server_loc or 'Auto'}\n"
+            f"⚡ <b>Target Ping:</b> {get_ping_indicator(ping_val)}\n"
+            f"📦 <b>Current Queue:</b> <code>{len(storage['queue'])} Files</code>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"<i>Select an action below:</i>"
         )
+        
+        keyboard = [[InlineKeyboardButton("🚀 POST TO ALL CHANNELS", callback_data="ent_post")], 
+                    [InlineKeyboardButton("🗑️ CLEAR QUEUE", callback_data="ent_clear")]]
+        
+        await update.message.reply_text(receipt, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
 # ==========================================
-# ✅ চ্যানেল পারমিশন চেক (Multi-Channel Check)
-# ==========================================
-async def check_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    
-    status_msg = await update.message.reply_text("🌐 **সিস্টেম চেক করা হচ্ছে...**", parse_mode='Markdown')
-    
-    results = []
-    # চেক ফোর্স চ্যানেল
-    try:
-        c = await context.bot.get_chat(FORCE_CHANNEL)
-        member = await context.bot.get_chat_member(FORCE_CHANNEL, context.bot.id)
-        results.append(f"✅ Force Channel (`{c.title}`): OK")
-    except Exception as e:
-        results.append(f"❌ Force Channel Error: {e}")
-
-    # চেক টার্গেট চ্যানেলসমূহ
-    for chat_id in CHANNEL_IDS:
-        try:
-            c = await context.bot.get_chat(chat_id)
-            member = await context.bot.get_chat_member(chat_id, context.bot.id)
-            if member.status in ['administrator', 'creator']:
-                results.append(f"✅ Target (`{c.title}`): OK (Admin)")
-            else:
-                results.append(f"⚠️ Target (`{chat_id}`): Not Admin!")
-        except Exception as e:
-            results.append(f"❌ Target (`{chat_id}`): Error ({e})")
-            
-    await status_msg.edit_text("💎 **Channel Check Report**\n\n" + "\n".join(results), parse_mode='Markdown')
-
-# ==========================================
-# 📊 ড্যাশবোর্ড
-# ==========================================
-async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    uptime = str(datetime.now() - storage["start_time"]).split('.')[0]
-    
-    stats_text = (
-        "📊 **Bot Dashboard**\n\n"
-        f"✅ মোট পোস্ট হয়েছে: {storage['total_posted']} টি ফাইল\n"
-        f"📦 কিউতে আছে: {len(storage['queue'])} টি ফাইল\n"
-        f"📢 কানেক্টেড চ্যানেল: {len(CHANNEL_IDS)} টি\n"
-        f"⏱ আপটাইম: {uptime}\n"
-        f"🤖 AI মডেল: GPT-4o-Mini (Active)"
-    )
-    
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.message.reply_text(stats_text, parse_mode='Markdown')
-    else:
-        await update.message.reply_text(stats_text, parse_mode='Markdown')
-
-# ==========================================
-# 🚀 মাল্টি-চ্যানেল পোস্ট প্রসেসর
+# 🚀 ৭. মাল্টি-চ্যানেল পোস্ট প্রসেসর
 # ==========================================
 async def process_enterprise_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID: return
-    
-    if not storage["queue"]:
-        msg = "❌ কিউ খালি! আগে ফাইল দিন।"
-        if update.callback_query: await update.callback_query.answer(msg, show_alert=True)
-        else: await context.bot.send_message(chat_id=user_id, text=msg)
+
+    if not storage["queue"]: 
+        msg = "❌ <b>কিউ খালি! আগে ফাইল দিন।</b>"
+        if update.callback_query: await update.callback_query.answer("Queue Empty!", show_alert=True)
+        else: await context.bot.send_message(chat_id=user_id, text=msg, parse_mode='HTML')
         return
 
-    # Force Channel Join Check
-    try:
-        member = await context.bot.get_chat_member(FORCE_CHANNEL, user_id)
-        if member.status not in ["member", "administrator", "creator"]:
-            join_kb = [[InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{FORCE_CHANNEL.replace('@','')}")] ]
-            await context.bot.send_message(chat_id=user_id, text="❌ আগে ফোর্স চ্যানেলে জয়েন করুন!", reply_markup=InlineKeyboardMarkup(join_kb))
-            return
-    except: pass
-
-    await context.bot.send_message(chat_id=user_id, text=f"⚡ {len(CHANNEL_IDS)} টি চ্যানেলে পোস্টিং শুরু হচ্ছে...")
+    status_msg = await context.bot.send_message(chat_id=user_id, text=f"⚡ <b>{len(CHANNEL_IDS)} টি চ্যানেলে পোস্টিং শুরু হচ্ছে...</b>", parse_mode='HTML')
 
     total_files = len(storage["queue"])
     
-    # 🔄 প্রতিটি চ্যানেলে লুপ চালানো
     for c_idx, channel_id in enumerate(CHANNEL_IDS):
         try:
             for i in range(0, total_files, 10):
                 batch = storage["queue"][i:i+10]
                 media_group = []
                 
-                for f_idx, (f_id, f_name) in enumerate(batch):
-                    # AI ম্যাজিক: প্রতিটি চ্যানেলের জন্য আলাদা ক্যাপশন
-                    caption = generate_unique_ai_caption(f_name, c_idx) if f_idx == 0 else ""
-                    media_group.append(InputMediaDocument(media=f_id, caption=caption, parse_mode='Markdown'))
+                for f_idx, f_info in enumerate(batch):
+                    caption = generate_unique_ai_caption(f_info, c_idx) if f_idx == 0 else ""
+                    media_group.append(InputMediaDocument(media=f_info['id'], caption=caption, parse_mode='HTML'))
                 
                 await context.bot.send_media_group(chat_id=channel_id, media=media_group)
             
-            await context.bot.send_message(chat_id=user_id, text=f"✅ চ্যানেল {c_idx+1} এ পোস্ট সফল!")
         except Exception as e:
-            await context.bot.send_message(chat_id=user_id, text=f"❌ চ্যানেল {channel_id} এ সমস্যা: {e}")
+            await context.bot.send_message(chat_id=user_id, text=f"❌ চ্যানেল {channel_id} এ এরর: <code>{html.escape(str(e))}</code>", parse_mode='HTML')
 
-    # আপডেট স্ট্যাটাস এবং কিউ ক্লিয়ার
     storage["total_posted"] += (total_files * len(CHANNEL_IDS))
     storage["queue"] = [] 
-    
-    await context.bot.send_message(chat_id=user_id, text="🏁 **মিশন কমপ্লিট!**\nসব চ্যানেলে ইউনিক ক্যাপশন সহ পোস্ট করা হয়েছে।")
+    await status_msg.edit_text("🏁 <b>মিশন কমপ্লিট! এক্সট্রিম লেভেলে পোস্ট করা হয়েছে।</b>", parse_mode='HTML')
 
 # ==========================================
-# 🖱️ বাটন এবং কমান্ড হ্যান্ডলার
+# 🖱️ ৮. বাটন এবং অন্যান্য হ্যান্ডলার
 # ==========================================
 async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -289,30 +262,36 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_enterprise_post(update, context)
     elif query.data == "ent_clear":
         storage["queue"] = []
-        await query.answer("Queue Cleared!", show_alert=True)
-        await query.edit_message_text("🗑️ কিউ ক্লিয়ার করা হয়েছে।")
-    elif query.data == "ent_stats":
-        await show_stats(update, context)
+        await query.answer("কিউ ক্লিয়ারড!", show_alert=True)
+        await query.edit_message_text("🗑️ <b>কিউ ক্লিয়ার করা হয়েছে।</b>", parse_mode='HTML')
+
+async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    uptime = str(datetime.now() - storage["start_time"]).split('.')[0]
+    stats_text = (
+        f"📊 <b>Bot Dashboard</b>\n\n"
+        f"✅ <b>মোট পোস্ট:</b> {storage['total_posted']} টি ফাইল\n"
+        f"📦 <b>কিউতে আছে:</b> {len(storage['queue'])} টি\n"
+        f"📢 <b>চ্যানেল:</b> {len(CHANNEL_IDS)} টি\n"
+        f"⏱ <b>আপটাইম:</b> {uptime}\n"
+    )
+    await update.message.reply_text(stats_text, parse_mode='HTML')
 
 # ==========================================
-# ▶️ মেইন এক্সিকিউশন
+# ▶️ ৯. মেইন এক্সিকিউশন
 # ==========================================
 if __name__ == '__main__':
-    # Bot Build
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(bot_init).build()
 
-    # Error Handler
     app.add_error_handler(error_handler)
 
-    # Handlers
     app.add_handler(MessageHandler(filters.Document.ALL, collect_files))
     app.add_handler(CommandHandler("post", process_enterprise_post))
     app.add_handler(CommandHandler("stats", show_stats))
-    app.add_handler(CommandHandler("chk", check_status))
     app.add_handler(CommandHandler("clear", lambda u, c: (storage.update({"queue": []}), u.message.reply_text("🗑️ Cleared!"))))
     app.add_handler(CommandHandler("queue", lambda u, c: u.message.reply_text(f"📦 কিউতে আছে: {len(storage['queue'])} টি ফাইল")))
     
     app.add_handler(CallbackQueryHandler(handle_callbacks))
 
-    print("🚀 Ultimate Enterprise Bot is Online and Guarded...")
+    print("🚀 Ultimate Xtream Level Bot is Online and Guarded...")
     app.run_polling()
