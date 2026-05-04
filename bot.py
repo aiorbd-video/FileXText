@@ -32,7 +32,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # 🤖 ক্লায়েন্ট সেটআপ
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# 📊 গ্লোবাল ভেরিয়েবল (Enterprise DB Simulation)
+# 📊 গ্লোবাল ভেরিয়েবল
 storage = {
     "queue": [],
     "total_posted": 0,
@@ -43,7 +43,7 @@ storage = {
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 🚨 গ্লোবাল এরর হ্যান্ডলার (Enterprise Detail)
+# 🚨 গ্লোবাল এরর হ্যান্ডলার
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
     tb_string = "".join(tb_list)
@@ -70,35 +70,69 @@ async def enterprise_init(application: Application):
     ]
     await application.bot.set_my_commands(commands)
 
-# 🤖 Enterprise AI Engine
+# 🤖 Advanced AI VPN Engine (নতুন अपडेट!)
 def generate_ai_caption(filename):
+    filename_lower = filename.lower()
+    
+    # ১. প্ল্যাটফর্ম/প্যাক ডিটেকশন
+    platforms = []
+    if 'fb' in filename_lower or 'facebook' in filename_lower: platforms.append("ফেসবুক প্যাক (Facebook)")
+    if 'yt' in filename_lower or 'youtube' in filename_lower: platforms.append("ইউটিউব প্যাক (YouTube)")
+    if 'tg' in filename_lower or 'telegram' in filename_lower: platforms.append("টেলিগ্রাম প্যাক (Telegram)")
+    if 'wa' in filename_lower or 'whatsapp' in filename_lower: platforms.append("হোয়াটসঅ্যাপ প্যাক (WhatsApp)")
+    if 'tiktok' in filename_lower or 'টিকটক' in filename_lower: platforms.append("টিকটক প্যাক (TikTok)")
+    if 'insta' in filename_lower or 'instagram' in filename_lower: platforms.append("ইনস্টাগ্রাম প্যাক (Instagram)")
+    
+    platform_text = ", ".join(platforms) if platforms else "অল সাইট / রেগুলার প্যাক"
+
+    # ২. ভিপিএন অ্যাপ এবং ইম্পোর্ট নির্দেশিকা ডিটেকশন
+    vpn_app = "আপনার ভিপিএন অ্যাপ"
+    import_instruction = "ফাইলটি ডাউনলোড করে আপনার ভিপিএন অ্যাপে ইম্পোর্ট করে কানেক্ট করুন।"
+    
+    if filename_lower.endswith('.dark'):
+        vpn_app = "Dark Tunnel"
+        import_instruction = "ফাইলটি ডাউনলোড করে **Dark tunnel** এ import করুন।"
+    elif filename_lower.endswith('.hc'):
+        vpn_app = "HTTP Custom"
+        import_instruction = "ফাইলটি ডাউনলোড করে **http Custom** এ import করুন।"
+    elif filename_lower.endswith('.sks'):
+        vpn_app = "SocksHTTP"
+        import_instruction = "ফাইলটি ডাউনলোড করে **SocksHTTP** এ import করুন।"
+
+    # ৩. AI কে দেওয়া কড়া নির্দেশিকা
+    system_rules = (
+        "You are an expert admin of a top Premium VPN Telegram channel in Bangladesh. "
+        "Your audience speaks Bengali (বাংলা). Write a highly engaging, catchy, and informative caption for a VPN config file. "
+        "Use bullet points and attractive emojis. Do NOT mention the raw messy filename."
+    )
+    
+    user_prompt = (
+        f"Write a Telegram caption based on these details:\n"
+        f"- Target Package/Site: {platform_text}\n"
+        f"- Required VPN App: {vpn_app}\n"
+        f"- Specific Setup Instruction (MUST INCLUDE THIS): {import_instruction}\n\n"
+        f"Add a brief introductory line saying 'নতুন প্রিমিয়াম কাস্টম ভিপিএন ফাইল চলে এসেছে!' and explain that this file will bypass limits and give them smooth, high-speed access. Keep it energetic!"
+    )
+    
     try:
-        system_rules = (
-            "You are an expert Social Media Manager for a tech Telegram channel. "
-            "Write the caption in professional yet catchy Bengali (বাংলা). "
-            "Keywords detection rules:\n"
-            "- 'fb' -> 'ফেসবুক প্যাক বাইপাস 🔵'\n"
-            "- 'yt' -> 'ইউটুব স্পেশাল 🔴'\n"
-            "- 'tg' -> 'টেলিগ্রাম প্রিমিয়াম 💎'\n"
-            "- 'wa' -> 'WhatsApp আপডেট 🟢'\n"
-            "- 'tiktok' -> 'টিকটক প্যাক 🔥'\n"
-            "- 'insta' -> 'Instagram স্পেশাল 📸'\n"
-            "Style: Use bullet points, attractive emojis, and a call to action. "
-            "Do not mention the raw filename unless it's part of the brand."
-        )
-        
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_rules},
-                {"role": "user", "content": f"Create a viral caption for file: {filename}"}
+                {"role": "user", "content": user_prompt}
             ],
             temperature=0.7
         )
         return response.choices[0].message.content
     except Exception as e:
         logger.error(f"AI Error: {e}")
-        return f"✨ **নতুন প্রিমিয়াম ফাইল**\n\n📂 ফাইল: {filename}\n🚀 এখনই ডাউনলোড করুন।"
+        # AI ফেইল করলেও এখন একেবারে সঠিক নির্দেশনাসহ ডাইনামিক মেসেজ যাবে!
+        fallback = f"✨ **নতুন প্রিমিয়াম কাস্টম ভিপিএন ফাইল!**\n\n"
+        fallback += f"🌐 **সাপোর্টেড প্যাক:** {platform_text}\n"
+        fallback += f"🛡 **ভিপিএন অ্যাপ:** {vpn_app}\n\n"
+        fallback += f"⚙️ **সেটআপ আপডেট:** {import_instruction}\n\n"
+        fallback += "🚀 এখনই ডাউনলোড করে হাই-স্পিড ইন্টারনেট উপভোগ করুন।"
+        return fallback
 
 # 📥 ফাইল কালেকশন
 async def collect_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
