@@ -44,24 +44,25 @@ storage = {
     "queue": [], 
     "files": {}, 
     "bot_username": "",
-    "users": set(), # ব্রডকাস্টের জন্য ইউজার ডেটাবেস
+    "users": set(), 
     "stats": {"daily": 0, "weekly": 0, "total": 0},
     "start_time": datetime.now()
 }
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-# কনভারসেশন স্টেটস
 ASK_SERVER, ASK_HOST, ASK_EXPIRY, ASK_CUSTOM, CONFIRM_ACTION, ASK_CUSTOM_TIME = range(6)
 
 # ==========================================
-# 🚨 ২. হেল্পার ও গ্লোবাল ফাংশন
+# 🚨 ২. গ্লোবাল এরর হ্যান্ডলার
 # ==========================================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     tb_string = "".join(traceback.format_exception(None, context.error, context.error.__traceback__))
     try: await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ <b>BOT ERROR</b>\n<pre>{html.escape(tb_string[:2000])}</pre>", parse_mode='HTML')
     except: pass
 
+# ==========================================
+# 🛠️ ৩. প্রো-লেভেল হেল্পার ফাংশন
+# ==========================================
 async def is_subscribed(bot, user_id):
     for channel in FORCE_CHANNELS:
         try:
@@ -73,7 +74,7 @@ async def is_subscribed(bot, user_id):
 def clean_file_name(original_name):
     ext = original_name.split('.')[-1] if '.' in original_name else "file"
     base = re.sub(r'[^a-zA-Z0-9 ]', ' ', original_name.rsplit('.', 1)[0])
-    return f"{' '.join(base.split()).title()} Premium VIP.{ext}"
+    return f"{' '.join(base.split()).title()} Premium.{ext}"
 
 def parse_expiry(text):
     if not text: return None
@@ -104,42 +105,68 @@ async def get_best_ping(host):
     if 'in' in host.lower(): return random.randint(35, 50)
     return random.randint(60, 90)
 
+def get_app_details(filename):
+    name_lower = filename.lower()
+    if name_lower.endswith('.hc'):
+        return "HTTP Custom", "https://play.google.com/store/apps/details?id=com.eweny.httpcustom", "১. <b>HTTP Custom</b> অ্যাপে (+) আইকনে ক্লিক করুন।\n২. Open Config থেকে ফাইলটি ইম্পোর্ট করে Connect করুন।"
+    elif name_lower.endswith('.dark'):
+        return "Dark Tunnel", "https://play.google.com/store/apps/details?id=com.darktunnel.android", "১. <b>Dark Tunnel</b> অ্যাপের উপরের ⚙️ আইকন থেকে Import করুন।\n২. Start বাটনে ক্লিক করে কানেক্ট করুন।"
+    elif name_lower.endswith('.nm'):
+        return "NetMod Syna", "https://play.google.com/store/apps/details?id=com.netmod.syna", "১. <b>NetMod</b> অ্যাপে 📁 আইকনে ক্লিক করে Import করুন।\n২. Start এ ক্লিক করে কানেক্ট করুন।"
+    elif name_lower.endswith('.sks'):
+        return "SSH Custom", "https://play.google.com/store/apps/details?id=com.sshc.custom", "১. <b>SSH Custom</b> অ্যাপে (+) আইকনে ক্লিক করে ফাইলটি ইম্পোর্ট করুন।\n২. Connect এ চাপুন।"
+    return "Premium VPN", "https://play.google.com/store/search?q=vpn", "১. আপনার ভিপিএন অ্যাপে ফাইলটি ইম্পোর্ট করে কানেক্ট করুন।"
+
 # ==========================================
-# 🤖 ৩. AI Engine
+# 🤖 ৪. Enterprise AI Engine
 # ==========================================
 async def generate_ai_caption(file_info):
+    app_name, play_store, setup = get_app_details(file_info['name'])
+    
     filename_lower = file_info['name'].lower()
-    platforms = [p for p, k in [("Facebook", 'fb'), ("YouTube", 'yt'), ("Telegram", 'tg'), ("WhatsApp", 'wa'), ("TikTok", 'tiktok')] if k in filename_lower]
-    platform_text = ", ".join(platforms) if platforms else "All Sites (যেকোনো নেটওয়ার্ক)"
-    app_name = "Dark Tunnel" if '.dark' in filename_lower else "HTTP Custom" if '.hc' in filename_lower else "VPN App"
-    setup = f"১. <b>{app_name}</b> ওপেন করুন।\n২. ফাইলটি ইম্পোর্ট করে কানেক্ট করুন।"
-
+    platforms = [p for p, k in [("Facebook", 'fb'), ("YouTube", 'yt'), ("Telegram", 'tg'), ("WhatsApp", 'wa'), ("TikTok", 'tiktok'), ("Instagram", 'insta')] if k in filename_lower]
+    platform_text = ", ".join(platforms) if platforms else "All Sites / Open Network"
+    
     ping_status = f"🟢 <code>{file_info['ping']} ms</code>" if file_info['ping'] else "🟠 <code>Protected</code>"
     expiry_text = f"\n┣ ⏳ <b>মেয়াদ:</b> <code>{file_info['expiry_raw']}</code>" if file_info['expiry_raw'] else ""
-    
+
+    admin_note = file_info['custom_msg']
+    ai_prompt = (
+        f"You are a professional Enterprise Tech Copywriter in Bengali. "
+        f"Write an engaging, highly attractive 3-line introductory text for a premium VPN config file targeting '{platform_text}'. "
+    )
+    if admin_note:
+        ai_prompt += f"You MUST creatively blend this Admin Note into the text: '{admin_note}'. Highlight it beautifully with an emoji."
+
     try:
         res = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Write a 2-line viral Bengali intro for a VPN config file. No extra text."},
-                {"role": "user", "content": f"Package: {platform_text}. Note: {file_info['custom_msg']}"}
-            ], temperature=0.8
+                {"role": "system", "content": "Write entirely in Bengali. Use emojis gracefully. Do NOT output any system reports, raw filenames, or fake speeds. Just the intro text."},
+                {"role": "user", "content": ai_prompt}
+            ], temperature=0.85
         )
         intro = res.choices[0].message.content.strip()
     except:
-        intro = "🔥 <b>নতুন প্রিমিয়াম হাই-স্পিড ভিপিএন ফাইল!</b> দ্রুত কানেক্ট করুন।"
+        intro = "🔥 <b>নতুন প্রিমিয়াম হাই-স্পিড ভিপিএন ফাইল!</b> কোনো ল্যাগ ছাড়াই স্মুথ ইন্টারনেট এনজয় করুন।"
+        if admin_note: intro += f"\n\n💡 <b>অ্যাডমিন নোট:</b> {admin_note}"
 
+    # ফেক স্পিড বাদ দিয়ে ক্লিন এক্সট্রিম ডিজাইন
     return (
         f"{intro}\n\n"
-        f"📊 <b>সিস্টেম রিপোর্ট</b>\n━━━━━━━━━━━━━━━━━━\n"
-        f"┣ 🌐 <b>প্যাক:</b> {platform_text}\n┣ 🛡 <b>অ্যাপ:</b> <code>{app_name}</code>\n"
-        f"┣ 🌍 <b>সার্ভার:</b> <b>{file_info['server'] or 'Auto'}</b>{expiry_text}\n"
-        f"┗ ⚡ <b>পিং:</b> {ping_status}\n━━━━━━━━━━━━━━━━━━\n\n"
-        f"🛠 <b>কীভাবে সেটআপ করবেন?</b>\n<i>{setup}</i>\n"
+        f"<blockquote>"
+        f"<b>⚙️ SYSTEM REPORT</b>\n"
+        f"┣ 🛡 <b>অ্যাপ:</b> <code>{app_name}</code>\n"
+        f"┣ 🌐 <b>প্যাক:</b> {platform_text}\n"
+        f"┣ 🌍 <b>সার্ভার:</b> <b>{file_info['server'] or 'Auto Premium'}</b>{expiry_text}\n"
+        f"┗ ⚡ <b>সার্ভার পিং:</b> {ping_status}"
+        f"</blockquote>\n"
+        f"🛠 <b>কীভাবে কানেক্ট করবেন?</b>\n"
+        f"<i>{setup}</i>\n"
     )
 
 # ==========================================
-# 📥 ৪. Interactive Setup (Popups & Schedules)
+# 📥 ৫. Interactive Setup (Popups)
 # ==========================================
 async def start_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
@@ -173,7 +200,7 @@ async def process_host(update: Update, context: ContextTypes.DEFAULT_TYPE):
     btns = [[InlineKeyboardButton("1 Day", callback_data="exp_1 Day"), InlineKeyboardButton("3 Days", callback_data="exp_3 Days")],
             [InlineKeyboardButton("7 Days", callback_data="exp_7 Days"), InlineKeyboardButton("1 Month", callback_data="exp_1 Month")],
             [InlineKeyboardButton("⏭️ স্কিপ করুন (Unlimited)", callback_data="exp_Skip")]]
-    await context.bot.send_message(chat_id=update.effective_user.id, text="⏳ <b>ফাইলের মেয়াদ নির্বাচন করুন:</b>\n<i>বাটন চাপুন অথবা লিখে দিন:</i>", reply_markup=InlineKeyboardMarkup(btns), parse_mode='HTML')
+    await context.bot.send_message(chat_id=update.effective_user.id, text="⏳ <b>ফাইলের মেয়াদ নির্বাচন করুন:</b>", reply_markup=InlineKeyboardMarkup(btns), parse_mode='HTML')
     return ASK_EXPIRY
 
 async def process_expiry(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -188,7 +215,7 @@ async def process_expiry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['temp']['expiry_raw'] = update.message.text
         context.user_data['temp']['expiry_date'] = parse_expiry(update.message.text)
 
-    await context.bot.send_message(chat_id=update.effective_user.id, text="💬 <b>অ্যাডমিন মেসেজ (অপশনাল):</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⏭️ স্কিপ করুন", callback_data="skip")]]), parse_mode='HTML')
+    await context.bot.send_message(chat_id=update.effective_user.id, text="💬 <b>অ্যাডমিন মেসেজ / ইউজার নোট (অপশনাল):</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⏭️ স্কিপ করুন", callback_data="skip")]]), parse_mode='HTML')
     return ASK_CUSTOM
 
 async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -243,15 +270,12 @@ async def handle_confirm_action(update: Update, context: ContextTypes.DEFAULT_TY
 async def process_custom_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = update.message.text.strip()
     try:
-        # সময় পার্স করা
         target_time = datetime.strptime(time_str, "%H:%M").time()
         now = datetime.now()
         target_dt = datetime.combine(now.date(), target_time)
-        
-        # যদি সময় পার হয়ে গিয়ে থাকে, পরের দিনের জন্য শিডিউল হবে
         if target_dt <= now: target_dt += timedelta(days=1)
-        
         delay = (target_dt - now).total_seconds()
+        
         context.job_queue.run_once(scheduled_post_job, delay, data={'user_id': update.effective_user.id})
         await update.message.reply_text(f"✅ <b>পোস্টটি ঠিক {time_str} টায় শিডিউল করা হয়েছে!</b>", parse_mode='HTML')
     except ValueError:
@@ -264,19 +288,26 @@ async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==========================================
-# 🚀 ৫. পোস্টিং, Safe Delivery এবং Auto Delete
+# 🛡️ ৬. Safe Delivery (Download Handler with Expiry Notice)
 # ==========================================
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     user_id = update.effective_user.id
-    storage["users"].add(user_id) # ব্রডকাস্টের জন্য সেভ
+    storage["users"].add(user_id) 
     
     if args and args[0].startswith("get_"):
         uid = args[0].replace("get_", "")
         if uid in storage["files"]:
             f = storage["files"][uid]
+            
+            # 🔴 এক্সপায়ারি নোটিশ (লিংক ডিলিট না করে ইউজারকে সুন্দর করে বোঝানো)
             if f['expiry_date'] and datetime.now() > f['expiry_date']:
-                await update.message.reply_text("❌ <b>এই ফাইলটির মেয়াদ শেষ হয়ে গেছে!</b>", parse_mode='HTML')
+                exp_notice = (
+                    f"⚠️ <b>দুঃখিত! এই ফাইলটির মেয়াদ শেষ হয়ে গেছে।</b>\n\n"
+                    f"আমাদের সার্ভারের স্পিড ও সিকিউরিটির স্বার্থে, মেয়াদোত্তীর্ণ ফাইলগুলো সিস্টেম থেকে স্বয়ংক্রিয়ভাবে মুছে ফেলা হয়।\n\n"
+                    f"👉 <i>দয়া করে আমাদের চ্যানেল থেকে নতুন এবং আপডেটেড ফাইল ডাউনলোড করুন।</i>"
+                )
+                await update.message.reply_text(exp_notice, parse_mode='HTML')
                 return
 
             if not await is_subscribed(context.bot, user_id):
@@ -290,12 +321,26 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 new_file = await context.bot.get_file(f['id'])
                 f_stream = io.BytesIO(await new_file.download_as_bytearray())
                 f_stream.name = clean_file_name(f['name'])
-                await update.message.reply_document(document=f_stream, caption=f"✅ <b>আপনার ফাইল প্রস্তুত!</b>", parse_mode='HTML')
+                
+                app_name, play_store, setup = get_app_details(f['name'])
+                
+                delivery_msg = (
+                    f"✅ <b>আপনার ফাইল প্রস্তুত!</b>\n\n"
+                    f"🛡 <b>প্রয়োজনীয় অ্যাপ:</b> <code>{app_name}</code>\n"
+                    f"🔗 <a href='{play_store}'><b>প্লে-স্টোর থেকে অ্যাপটি ডাউনলোড করুন</b></a>\n\n"
+                    f"🛠 <b>কীভাবে কানেক্ট করবেন?</b>\n<i>{setup}</i>\n\n"
+                    f"👇 <i>ফাইলটি অ্যাপে ইম্পোর্ট করুন</i>"
+                )
+                
+                await update.message.reply_document(document=f_stream, caption=delivery_msg, parse_mode='HTML', disable_web_page_preview=True)
                 storage["files"][uid]['downloads'] += 1 
                 await msg.delete()
             except Exception as e: await msg.edit_text(f"❌ এরর: {e}")
-        else: await update.message.reply_text("❌ ফাইলটি সার্ভারে নেই।")
+        else: await update.message.reply_text("❌ ফাইলটি সার্ভারে নেই বা মুছে ফেলা হয়েছে।")
 
+# ==========================================
+# 🚀 ৭. পোস্টিং, Broadcast & Expiry Monitor
+# ==========================================
 async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if not storage["queue"]: return
     files_to_post = storage["queue"].copy()
@@ -306,10 +351,10 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
             try:
                 caption = await generate_ai_caption(f)
                 url = f"https://t.me/{storage['bot_username']}?start=get_{f['uid']}"
+                # HTML টেক্সট লিংক, যাতে চ্যানেলের ডিফল্ট কমেন্ট অপশনটি ব্লক না হয়
                 final_caption = f"{caption}\n🔗 <a href='{url}'><b>📥 ডাউনলোড ফাইল (Safe Link)</b></a>"
                 
                 msg = await context.bot.send_message(chat_id=channel_id, text=final_caption, parse_mode='HTML', disable_web_page_preview=True)
-                # Auto-Delete এর জন্য মেসেজ আইডি সেভ
                 storage["files"][f['uid']]['posted_msgs'].append((channel_id, msg.message_id))
             except Exception as e:
                 await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ চ্যানেল এরর: {e}")
@@ -321,31 +366,15 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 async def scheduled_post_job(context: ContextTypes.DEFAULT_TYPE):
     await execute_posting(context, context.job.data['user_id'])
 
-# ==========================================
-# 🧹 ৬. Expiry Monitor (Auto Delete Link)
-# ==========================================
+# 🔴 এক্সপায়ারি মনিটর: লিংক ডিলিট না করে শুধু রিপোর্ট দেবে
 async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
     for uid, f in list(storage["files"].items()):
         if f['expiry_date'] and now > f['expiry_date'] and not f['reported']:
-            # 🔴 ১. চ্যানেলের লিংক মুছে দেওয়া (Auto Cleanup)
-            for chat_id, msg_id in f.get('posted_msgs', []):
-                try:
-                    await context.bot.edit_message_text(
-                        chat_id=chat_id, message_id=msg_id, 
-                        text=f"🔴 <b>এই ফাইলটির মেয়াদ শেষ হয়ে গেছে!</b>\n\nনতুন ফাইলের জন্য আমাদের চ্যানেলে চোখ রাখুন।", 
-                        parse_mode='HTML'
-                    )
-                except: pass
-
-            # 📊 ২. অ্যাডমিনকে রিপোর্ট দেওয়া
-            rep = f"📊 <b>EXPIRY REPORT</b>\n━━━━━━━━━━━━━━━━━━\n📄 ফাইল: <code>{f['name']}</code>\n👥 ডাউনলোড: <b>{f['downloads']} বার</b>\n✅ চ্যানেল থেকে লিংক রিমুভ করা হয়েছে।"
+            rep = f"📊 <b>EXPIRY REPORT</b>\n━━━━━━━━━━━━━━━━━━\n📄 ফাইল: <code>{f['name']}</code>\n👥 ডাউনলোড: <b>{f['downloads']} বার</b>\n✅ ফাইলটি সার্ভার থেকে ডিসকানেক্ট করা হয়েছে (লিংক ক্লিক করলে মেয়াদ শেষের নোটিশ পাবে)।"
             await context.bot.send_message(chat_id=ADMIN_ID, text=rep, parse_mode='HTML')
             storage["files"][uid]['reported'] = True
 
-# ==========================================
-# 📢 ৭. Broadcast System (Enterprise Feature)
-# ==========================================
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     text = " ".join(context.args)
@@ -355,36 +384,73 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     users = list(storage["users"])
     success = 0
-    await update.message.reply_text(f"📢 <b>{len(users)}</b> জন ইউজারকে মেসেজ পাঠানো হচ্ছে...", parse_mode='HTML')
+    await update.message.reply_text(f"📢 <b>{len(users)}</b> জনকে ব্রডকাস্ট করা হচ্ছে...", parse_mode='HTML')
     
     for u_id in users:
         try:
             await context.bot.send_message(chat_id=u_id, text=f"📢 <b>Admin Notice:</b>\n\n{text}", parse_mode='HTML')
             success += 1
-            await asyncio.sleep(0.05) # Anti-flood limit
+            await asyncio.sleep(0.05) 
         except: pass
         
     await update.message.reply_text(f"✅ <b>ব্রডকাস্ট কমপ্লিট!</b>\nসফলভাবে পৌঁছেছে: {success}/{len(users)} জনের কাছে।", parse_mode='HTML')
 
 # ==========================================
-# ▶️ ৮. Initialization
+# 📋 ৮. Enhanced Bot Menu & Initialization
 # ==========================================
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "💡 <b>বট ব্যবহারের নিয়মাবলী:</b>\n\n"
+        "১. ফাইল পাঠাতে আমাকে সরাসরি ফাইলটি সেন্ড করুন।\n"
+        "২. বট ধাপে ধাপে সার্ভার ও মেয়াদ জানতে চাইবে।\n"
+        "৩. আপনি স্কিপ বাটন ব্যবহার করতে পারেন।\n"
+        "৪. <b>/stats</b> - বটের পারফরম্যান্স দেখতে।\n"
+        "৫. <b>/queue</b> - শিডিউলে থাকা ফাইল দেখতে।\n"
+        "৬. <b>/broadcast</b> - সব ইউজারের কাছে মেসেজ দিতে।"
+    )
+    await update.message.reply_text(help_text, parse_mode='HTML')
+
+async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    start_t = time.perf_counter()
+    msg = await update.message.reply_text("🏓 <i>পিং টেস্ট হচ্ছে...</i>", parse_mode='HTML')
+    end_t = time.perf_counter()
+    await msg.edit_text(f"🏓 <b>Pong!</b>\nবটের রেসপন্স টাইম: <code>{round((end_t - start_t) * 1000)} ms</code>", parse_mode='HTML')
+
 async def bot_init(application: Application):
     storage["bot_username"] = (await application.bot.get_me()).username
     await application.bot.set_my_commands([
-        BotCommand("start", "শুরু করুন"), BotCommand("stats", "ড্যাশবোর্ড"),
-        BotCommand("queue", "কিউ দেখুন"), BotCommand("clear", "কিউ ক্লিয়ার"),
-        BotCommand("broadcast", "সবার কাছে মেসেজ দিন")
+        BotCommand("start", "শুরু করুন"),
+        BotCommand("stats", "📊 ড্যাশবোর্ড দেখুন"),
+        BotCommand("queue", "📦 কিউ দেখুন"),
+        BotCommand("clear", "🗑️ কিউ ক্লিয়ার"),
+        BotCommand("broadcast", "সবার কাছে মেসেজ দিন"),
+        BotCommand("ping", "🏓 বটের স্পিড চেক"),
+        BotCommand("help", "💡 হেল্প গাইড"),
+        BotCommand("cancel", "❌ কাজ বাতিল করুন")
     ])
-    application.job_queue.run_repeating(expiry_monitor, interval=600) # প্রতি ১০ মিনিটে এক্সপায়ারি চেক
+    application.job_queue.run_repeating(expiry_monitor, interval=600)
 
+async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    stats = storage["stats"]
+    uptime = str(datetime.now() - storage["start_time"]).split('.')[0]
+    await update.message.reply_text(
+        f"📊 <b>ড্যাশবোর্ড</b>\n━━━━━━━━━━\n✅ আজ পোস্ট: {stats['daily']}\n"
+        f"✅ এই সপ্তাহে: {stats['weekly']}\n✅ সর্বমোট: {stats['total']}\n"
+        f"📦 কিউতে আছে: {len(storage['queue'])}\n👥 মোট ইউজার (বট): {len(storage['users'])}\n⏱ আপটাইম: {uptime}", parse_mode='HTML')
+
+# ==========================================
+# ▶️ ৯. মেইন এক্সিকিউশন
+# ==========================================
 if __name__ == '__main__':
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(bot_init).build()
     app.add_error_handler(error_handler)
 
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("broadcast", broadcast_message))
-    app.add_handler(CommandHandler("stats", lambda u, c: u.message.reply_text(f"📊 <b>সর্বমোট পোস্ট:</b> {storage['stats']['total']}\n👥 <b>মোট ইউজার (বট):</b> {len(storage['users'])}", parse_mode='HTML')))
+    app.add_handler(CommandHandler("stats", show_stats))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("ping", cmd_ping))
     app.add_handler(CommandHandler("queue", lambda u, c: u.message.reply_text(f"📦 কিউতে আছে: {len(storage['queue'])} টি")))
     app.add_handler(CommandHandler("clear", lambda u, c: (storage.update({"queue": []}), u.message.reply_text("🗑️ Cleared!"))))
 
@@ -402,5 +468,5 @@ if __name__ == '__main__':
     )
 
     app.add_handler(conv_handler)
-    print("🚀 CEO Level Enterprise Bot is Running with Auto-Destruct & Broadcast...")
+    print("🚀 The Ultimate Enterprise CEO Edition is Running...")
     app.run_polling()
