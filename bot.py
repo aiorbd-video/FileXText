@@ -171,7 +171,7 @@ async def generate_unique_ai_caption(file_info, channel_index):
         f"</blockquote>\n"
         f"🛠 <b>কীভাবে কানেক্ট করবেন?</b>\n"
         f"<i>{setup}</i>\n\n"
-        f"👇 <b>ফাইলটি নিচে দেওয়া হলো, জলদি ডাউনলোড করে নিন!</b>"
+        f"❤️ <b>React diyen</b>"
     )
     return final_caption
 
