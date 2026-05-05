@@ -108,13 +108,13 @@ async def get_best_ping(host):
 def get_app_details(filename):
     name_lower = filename.lower()
     if name_lower.endswith('.hc'):
-        return "HTTP Custom", "https://play.google.com/store/apps/details?id=com.eweny.httpcustom", "১. <b>HTTP Custom</b> অ্যাপে (+) আইকনে ক্লিক করুন।\n২. Open Config থেকে ফাইলটি ইম্পোর্ট করে Connect করুন।"
+        return "HTTP Custom", "https://play.google.com/store/apps/details?id=com.eweny.httpcustom", "১. <b>HTTP Custom</b> অ্যাপে (+) আইকনে ক্লিক করুন。\n২. Open Config থেকে ফাইলটি ইম্পোর্ট করে Connect করুন।"
     elif name_lower.endswith('.dark'):
-        return "Dark Tunnel", "https://play.google.com/store/apps/details?id=com.darktunnel.android", "১. <b>Dark Tunnel</b> অ্যাপের উপরের ⚙️ আইকন থেকে Import করুন।\n২. Start বাটনে ক্লিক করে কানেক্ট করুন।"
+        return "Dark Tunnel", "https://play.google.com/store/apps/details?id=com.darktunnel.android", "১. <b>Dark Tunnel</b> অ্যাপের উপরের ⚙️ আইকন থেকে Import করুন。\n২. Start বাটনে ক্লিক করে কানেক্ট করুন।"
     elif name_lower.endswith('.nm'):
-        return "NetMod Syna", "https://play.google.com/store/apps/details?id=com.netmod.syna", "১. <b>NetMod</b> অ্যাপে 📁 আইকনে ক্লিক করে Import করুন।\n২. Start এ ক্লিক করে কানেক্ট করুন।"
+        return "NetMod Syna", "https://play.google.com/store/apps/details?id=com.netmod.syna", "১. <b>NetMod</b> অ্যাপে 📁 আইকনে ক্লিক করে Import করুন。\n২. Start এ ক্লিক করে কানেক্ট করুন।"
     elif name_lower.endswith('.sks'):
-        return "SSH Custom", "https://play.google.com/store/apps/details?id=com.sshc.custom", "১. <b>SSH Custom</b> অ্যাপে (+) আইকনে ক্লিক করে ফাইলটি ইম্পোর্ট করুন।\n২. Connect এ চাপুন।"
+        return "SSH Custom", "https://play.google.com/store/apps/details?id=com.sshc.custom", "১. <b>SSH Custom</b> অ্যাপে (+) আইকনে ক্লিক করে ফাইলটি ইম্পোর্ট করুন。\n২. Connect এ চাপুন।"
     return "Premium VPN", "https://play.google.com/store/search?q=vpn", "১. আপনার ভিপিএন অ্যাপে ফাইলটি ইম্পোর্ট করে কানেক্ট করুন।"
 
 # ==========================================
@@ -151,7 +151,6 @@ async def generate_ai_caption(file_info):
         intro = "🔥 <b>নতুন প্রিমিয়াম হাই-স্পিড ভিপিএন ফাইল!</b> কোনো ল্যাগ ছাড়াই স্মুথ ইন্টারনেট এনজয় করুন।"
         if admin_note: intro += f"\n\n💡 <b>অ্যাডমিন নোট:</b> {admin_note}"
 
-    # ফেক স্পিড বাদ দিয়ে ক্লিন এক্সট্রিম ডিজাইন
     return (
         f"{intro}\n\n"
         f"<blockquote>"
@@ -288,7 +287,7 @@ async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==========================================
-# 🛡️ ৬. Safe Delivery (Download Handler with Expiry Notice)
+# 🛡️ ৬. Safe Delivery (Download Handler Fixed)
 # ==========================================
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
@@ -300,7 +299,6 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if uid in storage["files"]:
             f = storage["files"][uid]
             
-            # 🔴 এক্সপায়ারি নোটিশ (লিংক ডিলিট না করে ইউজারকে সুন্দর করে বোঝানো)
             if f['expiry_date'] and datetime.now() > f['expiry_date']:
                 exp_notice = (
                     f"⚠️ <b>দুঃখিত! এই ফাইলটির মেয়াদ শেষ হয়ে গেছে।</b>\n\n"
@@ -332,7 +330,8 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"👇 <i>ফাইলটি অ্যাপে ইম্পোর্ট করুন</i>"
                 )
                 
-                await update.message.reply_document(document=f_stream, caption=delivery_msg, parse_mode='HTML', disable_web_page_preview=True)
+                # 🟢 ফিক্স: disable_web_page_preview রিমুভ করা হয়েছে কারণ reply_document এ এটি লাগে না
+                await update.message.reply_document(document=f_stream, caption=delivery_msg, parse_mode='HTML')
                 storage["files"][uid]['downloads'] += 1 
                 await msg.delete()
             except Exception as e: await msg.edit_text(f"❌ এরর: {e}")
@@ -351,7 +350,7 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
             try:
                 caption = await generate_ai_caption(f)
                 url = f"https://t.me/{storage['bot_username']}?start=get_{f['uid']}"
-                # HTML টেক্সট লিংক, যাতে চ্যানেলের ডিফল্ট কমেন্ট অপশনটি ব্লক না হয়
+                # 🟢 চ্যানেলে টেক্সট মেসেজের জন্য disable_web_page_preview ঠিক আছে
                 final_caption = f"{caption}\n🔗 <a href='{url}'><b>📥 ডাউনলোড ফাইল (Safe Link)</b></a>"
                 
                 msg = await context.bot.send_message(chat_id=channel_id, text=final_caption, parse_mode='HTML', disable_web_page_preview=True)
@@ -366,7 +365,6 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 async def scheduled_post_job(context: ContextTypes.DEFAULT_TYPE):
     await execute_posting(context, context.job.data['user_id'])
 
-# 🔴 এক্সপায়ারি মনিটর: লিংক ডিলিট না করে শুধু রিপোর্ট দেবে
 async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
     for uid, f in list(storage["files"].items()):
