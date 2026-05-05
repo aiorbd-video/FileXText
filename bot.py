@@ -102,8 +102,7 @@ def generate_unique_ai_caption(file_info, channel_index):
         vpn_app, setup = "HTTP Custom", "HTTP Custom অ্যাপে import করে কানেক্ট করুন।"
     elif filename_lower.endswith('.sks'):
         vpn_app, setup = "SocksHTTP", "SocksHTTP অ্যাপে import করে কানেক্ট করুন।"
-    elif filename_lower.endswith('.nm'):
-        vpn_app, setup = "NetMod Syna", "NetMod Syna অ্যাপে import করে কানেক্ট করুন।":
+    else:
         vpn_app, setup = "Supported VPN App", "আপনার ভিপিএন অ্যাপে ইম্পোর্ট করে কানেক্ট করুন।"
 
     ping_status = get_ping_indicator(file_info['ping'])
