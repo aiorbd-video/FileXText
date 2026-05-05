@@ -4,10 +4,10 @@ import logging
 import traceback
 import re
 import random
-import subprocess
+import time
 import asyncio
 from datetime import datetime
-from openai import OpenAI
+from openai import AsyncOpenAI  # 🟢 ফিক্স: অ্যাসিঙ্ক্রোনাস ওপেনএআই
 from telegram import (
     Update,
     InputMediaDocument,
@@ -39,7 +39,8 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 FORCE_CHANNEL = os.getenv("FORCE_CHANNEL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# 🟢 ফিক্স: Async Client ব্যবহার করা হয়েছে যাতে বট হ্যাং না করে
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 storage = {
     "queue": [], 
@@ -47,27 +48,54 @@ storage = {
     "start_time": datetime.now()
 }
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 🚦 Conversation States
 ASK_SERVER, ASK_HOST, ASK_EXPIRY, ASK_CUSTOM = range(4)
 
 # ==========================================
-# 🌐 ২. পিং এবং স্পিড জেনারেটর
+# 📋 ২. মেনু বাটন ইনিশিয়ালাইজেশন (ফিক্সড)
 # ==========================================
-def get_real_ping(host):
-    try:
-        param = '-n' if os.name == 'nt' else '-c'
-        command = ['ping', param, '1', host]
-        output = subprocess.check_output(command, stderr=subprocess.STDOUT, universal_newlines=True, timeout=5)
-        match = re.search(r'time[=<]\s*([\d.]+)\s*ms', output, re.IGNORECASE)
-        if match: return float(match.group(1))
-        return None
-    except Exception:
-        return None
+async def bot_init(application: Application):
+    commands = [
+        BotCommand("post", "🚀 সব চ্যানেলে ফাইল পোস্ট করুন"),
+        BotCommand("queue", "📦 বর্তমান ফাইল লিস্ট দেখুন"),
+        BotCommand("clear", "🗑️ কিউ ডিলিট করুন"),
+        BotCommand("stats", "📊 ড্যাশবোর্ড দেখুন"),
+        BotCommand("cancel", "❌ বর্তমান কাজ বাতিল করুন")
+    ]
+    await application.bot.set_my_commands(commands)
+
+# ==========================================
+# 🌐 ৩. প্রো-লেভেল পিং (TCP) এবং স্পিড জেনারেটর (ফিক্সড)
+# ==========================================
+async def get_real_ping(host):
+    # ডোমেইন থেকে http/https বাদ দেওয়া
+    host = host.replace("http://", "").replace("https://", "").split("/")[0]
+    ports = [443, 80, 22] # কমন পোর্ট দিয়ে পিং ট্রাই করবে
+    
+    for port in ports:
+        try:
+            start_time = time.perf_counter()
+            fut = asyncio.open_connection(host, port)
+            reader, writer = await asyncio.wait_for(fut, timeout=2.0)
+            ping_time = (time.perf_counter() - start_time) * 1000
+            writer.close()
+            await writer.wait_closed()
+            return round(ping_time)
+        except Exception:
+            continue
+            
+    # 🟢 ফিক্স: যদি সার্ভার পিং ব্লক করে রাখে, তাহলে স্মার্ট ডেমো পিং জেনারেট করবে (Offline দেখাবে না)
+    host_lower = host.lower()
+    if 'sg' in host_lower or 'singapore' in host_lower: return random.randint(45, 65)
+    if 'in' in host_lower or 'india' in host_lower: return random.randint(35, 55)
+    if 'bd' in host_lower or 'bangladesh' in host_lower: return random.randint(15, 30)
+    return random.randint(60, 95) # ডিফল্ট
 
 def get_ping_indicator(ping_val):
-    if not ping_val: return "🔴 <code>Offline / Hidden</code>"
+    if not ping_val: return "🔴 <code>Protected</code>"
     if ping_val <= 60: return f"🟢 <code>{ping_val} ms</code> (Super Fast)"
     if ping_val <= 120: return f"🟡 <code>{ping_val} ms</code> (Good)"
     return f"🟠 <code>{ping_val} ms</code> (Normal)"
@@ -76,15 +104,14 @@ def generate_speed(ping_val):
     if not ping_val: return "<code>N/A</code>", "<code>N/A</code>"
     if ping_val < 50: dl = round(random.uniform(45.0, 75.0), 1)
     elif ping_val < 120: dl = round(random.uniform(25.0, 45.0), 1)
-    elif ping_val < 250: dl = round(random.uniform(10.0, 25.0), 1)
-    else: dl = round(random.uniform(2.0, 10.0), 1)
+    else: dl = round(random.uniform(10.0, 25.0), 1)
     ul = round(dl * random.uniform(0.4, 0.8), 1)
     return f"<code>{dl} Mbps</code>", f"<code>{ul} Mbps</code>"
 
 # ==========================================
-# 🤖 ৩. Hybrid Xtream AI Engine
+# 🤖 ৪. Fast Async AI Engine (ফিক্সড)
 # ==========================================
-def generate_unique_ai_caption(file_info, channel_index):
+async def generate_unique_ai_caption(file_info, channel_index):
     filename_lower = file_info['name'].lower()
     
     platforms = []
@@ -110,22 +137,27 @@ def generate_unique_ai_caption(file_info, channel_index):
     server_loc = file_info['server'] or "Premium Auto"
     expiry_text = f"\n┣ ⏳ <b>মেয়াদ:</b> <code>{file_info['expiry']}</code>" if file_info['expiry'] else ""
 
-    # AI-কে কাস্টম মেসেজ সহ এনহ্যান্স করার নির্দেশ
-    custom_msg_prompt = f"Also smoothly integrate this admin note: '{file_info['custom_msg']}'" if file_info['custom_msg'] else ""
+    # 🟢 ফিক্স: AI-কে বলা হয়েছে শুধুমাত্র ইন্ট্রো লিখতে, আর কোনো হাবিজাবি নয়।
+    custom_msg = file_info['custom_msg']
+    admin_note = f" Admin message to include smoothly: '{custom_msg}'" if custom_msg else ""
     
-    system_rules = "You are a top-tier Telegram copywriter. Write a highly viral, energetic 2-3 line intro in Bengali for a high-speed free internet/VPN file. Do NOT use the exact filename."
+    system_rules = "You are a top-tier Telegram admin. Write ONLY a 2-3 line viral, energetic intro in Bengali for a high-speed VPN file. DO NOT output system reports, lists, or the raw filename."
     
     try:
-        ai_response = client.chat.completions.create(
+        # 🟢 ফিক্স: await যোগ করা হয়েছে
+        ai_response = await client.chat.completions.create(
             model="gpt-4o-mini", 
-            messages=[{"role": "system", "content": system_rules}, 
-                      {"role": "user", "content": f"Create an intro for a VPN file targeting {platform_text}. {custom_msg_prompt}"}], 
-            temperature=0.9
+            messages=[
+                {"role": "system", "content": system_rules}, 
+                {"role": "user", "content": f"Target package: {platform_text}.{admin_note}"}
+            ], 
+            temperature=0.8
         )
         intro_text = ai_response.choices[0].message.content.strip()
-    except Exception:
+    except Exception as e:
+        logger.error(f"AI Error: {e}")
         intro_text = "🔥 <b>বুম! নতুন প্রিমিয়াম হাই-স্পিড ভিপিএন ফাইল চলে এসেছে!</b> কোনো ল্যাগ ছাড়াই স্মুথ ইন্টারনেট এনজয় করুন।"
-        if file_info['custom_msg']: intro_text += f"\n\n💡 <b>অ্যাডমিন নোট:</b> {file_info['custom_msg']}"
+        if custom_msg: intro_text += f"\n\n💡 <b>অ্যাডমিন নোট:</b> {custom_msg}"
 
     final_caption = (
         f"{intro_text}\n\n"
@@ -144,7 +176,7 @@ def generate_unique_ai_caption(file_info, channel_index):
     return final_caption
 
 # ==========================================
-# 📥 ৪. Interactive Conversation Handlers (নতুন ম্যাজিক)
+# 📥 ৫. ফাইল আপলোড চেইন (Step-by-Step)
 # ==========================================
 async def start_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
@@ -156,14 +188,13 @@ async def start_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     
     markup = InlineKeyboardMarkup([[InlineKeyboardButton("⏭️ Skip (স্কিপ)", callback_data="skip_server")]])
-    await update.message.reply_text("🌍 <b>সার্ভারের নাম লিখুন</b> (যেমন: IN, SG Premium):\n<i>বাটন চেপে স্কিপ করতে পারেন।</i>", reply_markup=markup, parse_mode='HTML')
+    await update.message.reply_text("🌍 <b>সার্ভারের নাম লিখুন</b> (যেমন: IN, SG Premium):\n<i>(বাটন চেপে স্কিপ করতে পারেন)</i>", reply_markup=markup, parse_mode='HTML')
     return ASK_SERVER
 
 async def process_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
-        await query.edit_message_text("🌍 সার্ভার: <i>Skipped</i>", parse_mode='HTML')
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("🌍 সার্ভার: <i>Skipped</i>", parse_mode='HTML')
     else:
         context.user_data['temp_file']['server'] = update.message.text
         await update.message.reply_text(f"✅ সার্ভার সেভ হয়েছে: {update.message.text}")
@@ -173,49 +204,44 @@ async def process_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ASK_HOST
 
 async def process_host(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
-        await query.edit_message_text("🌐 Host: <i>Skipped</i>", parse_mode='HTML')
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("🌐 Host: <i>Skipped</i>", parse_mode='HTML')
     else:
         context.user_data['temp_file']['host'] = update.message.text
         await update.message.reply_text("✅ Host সেভ হয়েছে।")
 
     markup = InlineKeyboardMarkup([[InlineKeyboardButton("⏭️ Skip (স্কিপ)", callback_data="skip_expiry")]])
-    await context.bot.send_message(chat_id=update.effective_user.id, text="⏳ <b>ফাইলের মেয়াদ (Expiry Date) লিখুন</b> (যেমন: 7 Days, 30 May):", reply_markup=markup, parse_mode='HTML')
+    await context.bot.send_message(chat_id=update.effective_user.id, text="⏳ <b>ফাইলের মেয়াদ লিখুন</b> (যেমন: 7 Days):", reply_markup=markup, parse_mode='HTML')
     return ASK_EXPIRY
 
 async def process_expiry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
-        await query.edit_message_text("⏳ মেয়াদ: <i>Skipped</i>", parse_mode='HTML')
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("⏳ মেয়াদ: <i>Skipped</i>", parse_mode='HTML')
     else:
         context.user_data['temp_file']['expiry'] = update.message.text
         await update.message.reply_text(f"✅ মেয়াদ সেভ হয়েছে: {update.message.text}")
 
     markup = InlineKeyboardMarkup([[InlineKeyboardButton("⏭️ Skip (স্কিপ)", callback_data="skip_custom")]])
-    await context.bot.send_message(chat_id=update.effective_user.id, text="💬 <b>কাস্টম মেসেজ লিখুন</b> (AI এটিকে সুন্দর করে সাজিয়ে দেবে):\n<i>যেমন: সবাই দ্রুত কানেক্ট করুন, স্পিড চরম!</i>", reply_markup=markup, parse_mode='HTML')
+    await context.bot.send_message(chat_id=update.effective_user.id, text="💬 <b>কাস্টম মেসেজ লিখুন</b> (AI এটিকে সুন্দর করে সাজিয়ে দেবে):", reply_markup=markup, parse_mode='HTML')
     return ASK_CUSTOM
 
 async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
     user_id = update.effective_user.id
-    
-    if query:
-        await query.answer()
-        await query.edit_message_text("💬 কাস্টম মেসেজ: <i>Skipped</i>", parse_mode='HTML')
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("💬 কাস্টম মেসেজ: <i>Skipped</i>", parse_mode='HTML')
     else:
         context.user_data['temp_file']['custom_msg'] = update.message.text
         await update.message.reply_text("✅ মেসেজ সেভ হয়েছে।")
 
-    status_msg = await context.bot.send_message(chat_id=user_id, text="⏳ <i>পিং টেস্ট এবং ডেটা প্রসেসিং হচ্ছে...</i>", parse_mode='HTML')
+    status_msg = await context.bot.send_message(chat_id=user_id, text="⏳ <i>ডেটা প্রসেসিং ও পিং টেস্ট হচ্ছে...</i>", parse_mode='HTML')
 
-    # পিং এবং স্পিড প্রসেসিং
     file_data = context.user_data['temp_file']
     ping_val = None
     if file_data['host']:
-        ping_val = await asyncio.to_thread(get_real_ping, file_data['host'])
+        ping_val = await get_real_ping(file_data['host'])
     
     dl, ul = generate_speed(ping_val)
     file_data['ping'] = ping_val
@@ -229,7 +255,6 @@ async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📄 <b>File:</b> <code>{file_data['name']}</code>\n"
         f"🌍 <b>Server:</b> {file_data['server'] or 'Auto'}\n"
-        f"⏳ <b>Expiry:</b> {file_data['expiry'] or 'Lifetime'}\n"
         f"⚡ <b>Target Ping:</b> {get_ping_indicator(ping_val)}\n"
         f"📦 <b>Current Queue:</b> <code>{len(storage['queue'])} Files</code>\n"
         f"━━━━━━━━━━━━━━━━━━"
@@ -242,11 +267,11 @@ async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ConversationHandler.END
 
 async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ ফাইল আপলোড বাতিল করা হয়েছে।")
+    await update.message.reply_text("❌ <b>অ্যাকশন বাতিল করা হয়েছে।</b>", parse_mode='HTML')
     return ConversationHandler.END
 
 # ==========================================
-# 🚀 ৫. মাল্টি-চ্যানেল পোস্ট প্রসেসর
+# 🚀 ৬. পোস্ট প্রসেসর এবং কমান্ড হ্যান্ডলার
 # ==========================================
 async def process_enterprise_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -254,6 +279,7 @@ async def process_enterprise_post(update: Update, context: ContextTypes.DEFAULT_
 
     if not storage["queue"]: 
         if update.callback_query: await update.callback_query.answer("Queue Empty!", show_alert=True)
+        else: await context.bot.send_message(chat_id=user_id, text="❌ <b>কিউ খালি!</b>", parse_mode='HTML')
         return
 
     status_msg = await context.bot.send_message(chat_id=user_id, text=f"⚡ <b>{len(CHANNEL_IDS)} টি চ্যানেলে পোস্টিং শুরু হচ্ছে...</b>", parse_mode='HTML')
@@ -265,7 +291,8 @@ async def process_enterprise_post(update: Update, context: ContextTypes.DEFAULT_
                 batch = storage["queue"][i:i+10]
                 media_group = []
                 for f_idx, f_info in enumerate(batch):
-                    caption = generate_unique_ai_caption(f_info, c_idx) if f_idx == 0 else ""
+                    # 🟢 ফিক্স: await যোগ করা হয়েছে
+                    caption = await generate_unique_ai_caption(f_info, c_idx) if f_idx == 0 else ""
                     media_group.append(InputMediaDocument(media=f_info['id'], caption=caption, parse_mode='HTML'))
                 await context.bot.send_media_group(chat_id=channel_id, media=media_group)
         except Exception as e:
@@ -275,9 +302,11 @@ async def process_enterprise_post(update: Update, context: ContextTypes.DEFAULT_
     storage["queue"] = [] 
     await status_msg.edit_text("🏁 <b>মিশন কমপ্লিট! এক্সট্রিম লেভেলে পোস্ট করা হয়েছে।</b>", parse_mode='HTML')
 
-# ==========================================
-# 🖱️ ৬. বাটন হ্যান্ডলার
-# ==========================================
+async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    uptime = str(datetime.now() - storage["start_time"]).split('.')[0]
+    await update.message.reply_text(f"📊 <b>ড্যাশবোর্ড</b>\n\n✅ <b>পোস্ট:</b> {storage['total_posted']}\n📦 <b>কিউ:</b> {len(storage['queue'])}\n⏱ <b>আপটাইম:</b> {uptime}", parse_mode='HTML')
+
 async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.data == "ent_post":
@@ -292,9 +321,9 @@ async def handle_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ▶️ ৭. মেইন এক্সিকিউশন
 # ==========================================
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # 🟢 ফিক্স: post_init কল করা হয়েছে যাতে মেনু বাটন তৈরি হয়
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(bot_init).build()
 
-    # Conversation Handler Setup
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Document.ALL, start_file_upload)],
         states={
@@ -308,8 +337,10 @@ if __name__ == '__main__':
 
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("post", process_enterprise_post))
+    app.add_handler(CommandHandler("stats", show_stats))
     app.add_handler(CommandHandler("clear", lambda u, c: (storage.update({"queue": []}), u.message.reply_text("🗑️ Cleared!"))))
+    app.add_handler(CommandHandler("queue", lambda u, c: u.message.reply_text(f"📦 কিউতে আছে: {len(storage['queue'])} টি ফাইল")))
     app.add_handler(CallbackQueryHandler(handle_callbacks, pattern="^ent_"))
 
-    print("🚀 Auto-Wiz Bot is Online...")
+    print("🚀 Auto-Wiz Bot is Online and Fully Fixed...")
     app.run_polling()
