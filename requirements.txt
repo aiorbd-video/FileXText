@@ -1,3 +1,6 @@
-python-telegram-bot[job-queue]
-openai
+python-telegram-bot[job-queue]==20.7
 motor
+openai
+Pillow
+pymongo
+dnspython
