@@ -8,8 +8,9 @@ import asyncio
 import re
 import uuid
 import io
-from datetime import datetime, time as dt_time, timedelta
+from datetime import datetime, timedelta
 from openai import AsyncOpenAI
+from motor.motor_asyncio import AsyncIOMotorClient # MongoDB Async Driver
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -28,7 +29,7 @@ from telegram.ext import (
 )
 
 # ==========================================
-# ⚙️ ১. কনফিগারেশন এবং স্টোরেজ
+# ⚙️ ১. কনফিগারেশন এবং MongoDB কানেকশন
 # ==========================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -38,14 +39,21 @@ try:
 except Exception:
     CHANNEL_IDS = []
 
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-storage = {
-    "queue": [], 
-    "files": {}, 
+# 🗄️ MongoDB Setup
+MONGO_URI = os.getenv("MONGO_URI")
+db_client = AsyncIOMotorClient(MONGO_URI)
+db = db_client["vpn_enterprise_db"]
+
+files_col = db["files"]
+users_col = db["users"]
+stats_col = db["stats"]
+
+# Transient System Memory (Re-initialized on startup)
+sys_memory = {
     "bot_username": "",
-    "users": set(), 
-    "stats": {"daily": 0, "weekly": 0, "total": 0},
     "start_time": datetime.now()
 }
 
@@ -165,7 +173,7 @@ async def generate_ai_caption(file_info):
     )
 
 # ==========================================
-# 📥 ৫. Interactive Setup (Popups)
+# 📥 ৫. Interactive Setup (Popups to DB)
 # ==========================================
 async def start_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return ConversationHandler.END
@@ -173,7 +181,8 @@ async def start_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['temp'] = {
         "id": doc.file_id, "name": doc.file_name, "uid": str(uuid.uuid4())[:8],
         "server": None, "host": None, "expiry_raw": None, "expiry_date": None,
-        "custom_msg": None, "downloads": 0, "reported": False, "ping": None, "posted_msgs": []
+        "custom_msg": None, "downloads": 0, "reported": False, "ping": None, 
+        "posted_msgs": [], "status": "queued" # MongoDB Status Field
     }
     btns = [[InlineKeyboardButton("🇸🇬 SG", callback_data="srv_SG"), InlineKeyboardButton("🇮🇳 IN", callback_data="srv_IN"), InlineKeyboardButton("🇧🇩 BD", callback_data="srv_BD")],
             [InlineKeyboardButton("⏭️ স্কিপ করুন", callback_data="srv_Skip")]]
@@ -227,10 +236,11 @@ async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE)
     f_data = context.user_data['temp']
     f_data['ping'] = await get_best_ping(f_data['host']) if f_data['host'] else None
     
-    storage["files"][f_data['uid']] = f_data
-    storage["queue"].append(f_data)
+    # 🗄️ Save to MongoDB Queue
+    await files_col.insert_one(f_data)
+    queue_count = await files_col.count_documents({"status": "queued"})
 
-    receipt = f"✅ <b>ফাইল রেডি!</b>\n📄 <code>{clean_file_name(f_data['name'])}</code>\n📦 কিউ: {len(storage['queue'])} টি"
+    receipt = f"✅ <b>ফাইল ডাটাবেসে রেডি!</b>\n📄 <code>{clean_file_name(f_data['name'])}</code>\n📦 কিউ: {queue_count} টি"
     
     keyboard = [
         [InlineKeyboardButton("🚀 পোস্ট করুন (এখনই)", callback_data="act_now")],
@@ -259,7 +269,7 @@ async def handle_confirm_action(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("✅ <b>৩ ঘণ্টা পর পোস্ট হবে।</b>", parse_mode='HTML')
         return ConversationHandler.END
     elif query.data == "act_clear":
-        storage["queue"] = []
+        await files_col.delete_many({"status": "queued"})
         await query.edit_message_text("🗑️ <b>কিউ ক্লিয়ার করা হয়েছে।</b>", parse_mode='HTML')
         return ConversationHandler.END
     elif query.data == "act_custom":
@@ -287,30 +297,34 @@ async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ==========================================
-# 🛡️ ৬. Safe Delivery (Download Handler Fixed)
+# 🛡️ ৬. Safe Delivery (MongoDB Read)
 # ==========================================
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     user_id = update.effective_user.id
-    storage["users"].add(user_id) 
+    
+    # 🗄️ Save User to DB
+    await users_col.update_one({"_id": user_id}, {"$set": {"_id": user_id}}, upsert=True)
     
     if args and args[0].startswith("get_"):
         uid = args[0].replace("get_", "")
-        if uid in storage["files"]:
-            f = storage["files"][uid]
-            
-            if f['expiry_date'] and datetime.now() > f['expiry_date']:
+        
+        # 🗄️ Fetch File from DB
+        f = await files_col.find_one({"uid": uid})
+        
+        if f:
+            if f.get('expiry_date') and datetime.now() > f['expiry_date']:
                 exp_notice = (
                     f"⚠️ <b>দুঃখিত! এই ফাইলটির মেয়াদ শেষ হয়ে গেছে।</b>\n\n"
-                    f"আমাদের সার্ভারের স্পিড ও সিকিউরিটির স্বার্থে, মেয়াদোত্তীর্ণ ফাইলগুলো সিস্টেম থেকে স্বয়ংক্রিয়ভাবে মুছে ফেলা হয়।\n\n"
-                    f"👉 <i>দয়া করে আমাদের চ্যানেল থেকে নতুন এবং আপডেটেড ফাইল ডাউনলোড করুন।</i>"
+                    f"আমাদের সার্ভারের স্পিড ও সিকিউরিটির স্বার্থে, মেয়াদোত্তীর্ণ ফাইলগুলো সিস্টেম থেকে মুছে ফেলা হয়।\n"
+                    f"👉 <i>দয়া করে চ্যানেল থেকে নতুন ফাইল ডাউনলোড করুন।</i>"
                 )
                 await update.message.reply_text(exp_notice, parse_mode='HTML')
                 return
 
             if not await is_subscribed(context.bot, user_id):
                 btns = [[InlineKeyboardButton(f"📢 Channel {i+1}", url=f"https://t.me/{c.replace('@','')}")] for i, c in enumerate(FORCE_CHANNELS)]
-                btns.append([InlineKeyboardButton("🔄 জয়েন করেছি (Try Again)", url=f"https://t.me/{storage['bot_username']}?start=get_{uid}")])
+                btns.append([InlineKeyboardButton("🔄 জয়েন করেছি (Try Again)", url=f"https://t.me/{sys_memory['bot_username']}?start=get_{uid}")])
                 await update.message.reply_text("❌ <b>ফাইল পেতে আগে আমাদের দুটি চ্যানেলেই জয়েন করুন!</b>", reply_markup=InlineKeyboardMarkup(btns), parse_mode='HTML')
                 return
 
@@ -330,9 +344,10 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"👇 <i>ফাইলটি অ্যাপে ইম্পোর্ট করুন</i>"
                 )
                 
-                # 🟢 ফিক্স: disable_web_page_preview রিমুভ করা হয়েছে কারণ reply_document এ এটি লাগে না
                 await update.message.reply_document(document=f_stream, caption=delivery_msg, parse_mode='HTML')
-                storage["files"][uid]['downloads'] += 1 
+                
+                # 🗄️ Increment Downloads
+                await files_col.update_one({"uid": uid}, {"$inc": {"downloads": 1}})
                 await msg.delete()
             except Exception as e: await msg.edit_text(f"❌ এরর: {e}")
         else: await update.message.reply_text("❌ ফাইলটি সার্ভারে নেই বা মুছে ফেলা হয়েছে।")
@@ -341,25 +356,35 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🚀 ৭. পোস্টিং, Broadcast & Expiry Monitor
 # ==========================================
 async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    if not storage["queue"]: return
-    files_to_post = storage["queue"].copy()
-    storage["queue"] = [] 
+    # 🗄️ Fetch Queued Files
+    files_to_post = await files_col.find({"status": "queued"}).to_list(length=None)
+    if not files_to_post: return
     
-    for channel_id in CHANNEL_IDS:
-        for f in files_to_post:
-            try:
-                caption = await generate_ai_caption(f)
-                url = f"https://t.me/{storage['bot_username']}?start=get_{f['uid']}"
-                # 🟢 চ্যানেলে টেক্সট মেসেজের জন্য disable_web_page_preview ঠিক আছে
-                final_caption = f"{caption}\n🔗 <a href='{url}'><b>📥 ডাউনলোড ফাইল (Safe Link)</b></a>"
-                
+    for f in files_to_post:
+        posted_records = []
+        try:
+            caption = await generate_ai_caption(f)
+            url = f"https://t.me/{sys_memory['bot_username']}?start=get_{f['uid']}"
+            final_caption = f"{caption}\n🔗 <a href='{url}'><b>📥 ডাউনলোড ফাইল (Safe Link)</b></a>"
+            
+            for channel_id in CHANNEL_IDS:
                 msg = await context.bot.send_message(chat_id=channel_id, text=final_caption, parse_mode='HTML', disable_web_page_preview=True)
-                storage["files"][f['uid']]['posted_msgs'].append((channel_id, msg.message_id))
-            except Exception as e:
-                await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ চ্যানেল এরর: {e}")
+                posted_records.append([channel_id, msg.message_id])
+                
+            # 🗄️ Update Status and Posted Messages
+            await files_col.update_one({"uid": f["uid"]}, {"$set": {"status": "posted", "posted_msgs": posted_records}})
+        except Exception as e:
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ চ্যানেল এরর: {e}")
 
-    posted = len(files_to_post) * len(CHANNEL_IDS)
-    storage["stats"]["daily"] += posted; storage["stats"]["total"] += posted
+    posted_count = len(files_to_post) * len(CHANNEL_IDS)
+    
+    # 🗄️ Update Global Stats
+    await stats_col.update_one(
+        {"_id": "global_stats"}, 
+        {"$inc": {"daily": posted_count, "weekly": posted_count, "total": posted_count}}, 
+        upsert=True
+    )
+    
     await context.bot.send_message(chat_id=user_id, text="🏁 <b>পোস্টিং কমপ্লিট!</b>", parse_mode='HTML')
 
 async def scheduled_post_job(context: ContextTypes.DEFAULT_TYPE):
@@ -367,11 +392,18 @@ async def scheduled_post_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
-    for uid, f in list(storage["files"].items()):
-        if f['expiry_date'] and now > f['expiry_date'] and not f['reported']:
-            rep = f"📊 <b>EXPIRY REPORT</b>\n━━━━━━━━━━━━━━━━━━\n📄 ফাইল: <code>{f['name']}</code>\n👥 ডাউনলোড: <b>{f['downloads']} বার</b>\n✅ ফাইলটি সার্ভার থেকে ডিসকানেক্ট করা হয়েছে (লিংক ক্লিক করলে মেয়াদ শেষের নোটিশ পাবে)।"
-            await context.bot.send_message(chat_id=ADMIN_ID, text=rep, parse_mode='HTML')
-            storage["files"][uid]['reported'] = True
+    # 🗄️ Find Expired, Posted, and Unreported files
+    expired_files = await files_col.find({
+        "expiry_date": {"$lt": now}, 
+        "reported": False, 
+        "status": "posted"
+    }).to_list(length=None)
+    
+    for f in expired_files:
+        rep = f"📊 <b>EXPIRY REPORT</b>\n━━━━━━━━━━━━━━━━━━\n📄 ফাইল: <code>{f['name']}</code>\n👥 ডাউনলোড: <b>{f.get('downloads', 0)} বার</b>\n✅ ফাইলটি সার্ভার থেকে ডিসকানেক্ট করা হয়েছে।"
+        await context.bot.send_message(chat_id=ADMIN_ID, text=rep, parse_mode='HTML')
+        # 🗄️ Mark as reported
+        await files_col.update_one({"uid": f["uid"]}, {"$set": {"reported": True}})
 
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -380,18 +412,21 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ব্যবহার: `/broadcast আপনার মেসেজ`", parse_mode='Markdown')
         return
     
-    users = list(storage["users"])
+    # 🗄️ Fetch All Users
+    users_cursor = users_col.find({})
+    total_users = await users_col.count_documents({})
     success = 0
-    await update.message.reply_text(f"📢 <b>{len(users)}</b> জনকে ব্রডকাস্ট করা হচ্ছে...", parse_mode='HTML')
     
-    for u_id in users:
+    await update.message.reply_text(f"📢 <b>{total_users}</b> জনকে ব্রডকাস্ট করা হচ্ছে...", parse_mode='HTML')
+    
+    async for user in users_cursor:
         try:
-            await context.bot.send_message(chat_id=u_id, text=f"📢 <b>Admin Notice:</b>\n\n{text}", parse_mode='HTML')
+            await context.bot.send_message(chat_id=user["_id"], text=f"📢 <b>Admin Notice:</b>\n\n{text}", parse_mode='HTML')
             success += 1
             await asyncio.sleep(0.05) 
         except: pass
         
-    await update.message.reply_text(f"✅ <b>ব্রডকাস্ট কমপ্লিট!</b>\nসফলভাবে পৌঁছেছে: {success}/{len(users)} জনের কাছে।", parse_mode='HTML')
+    await update.message.reply_text(f"✅ <b>ব্রডকাস্ট কমপ্লিট!</b>\nসফলভাবে পৌঁছেছে: {success}/{total_users} জনের কাছে।", parse_mode='HTML')
 
 # ==========================================
 # 📋 ৮. Enhanced Bot Menu & Initialization
@@ -400,11 +435,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "💡 <b>বট ব্যবহারের নিয়মাবলী:</b>\n\n"
         "১. ফাইল পাঠাতে আমাকে সরাসরি ফাইলটি সেন্ড করুন।\n"
-        "২. বট ধাপে ধাপে সার্ভার ও মেয়াদ জানতে চাইবে।\n"
-        "৩. আপনি স্কিপ বাটন ব্যবহার করতে পারেন।\n"
-        "৪. <b>/stats</b> - বটের পারফরম্যান্স দেখতে।\n"
-        "৫. <b>/queue</b> - শিডিউলে থাকা ফাইল দেখতে।\n"
-        "৬. <b>/broadcast</b> - সব ইউজারের কাছে মেসেজ দিতে।"
+        "২. <b>/stats</b> - বটের পারফরম্যান্স দেখতে।\n"
+        "৩. <b>/queue</b> - শিডিউলে থাকা ফাইল দেখতে।\n"
+        "৪. <b>/broadcast</b> - সব ইউজারের কাছে মেসেজ দিতে।"
     )
     await update.message.reply_text(help_text, parse_mode='HTML')
 
@@ -415,27 +448,38 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.edit_text(f"🏓 <b>Pong!</b>\nবটের রেসপন্স টাইম: <code>{round((end_t - start_t) * 1000)} ms</code>", parse_mode='HTML')
 
 async def bot_init(application: Application):
-    storage["bot_username"] = (await application.bot.get_me()).username
+    sys_memory["bot_username"] = (await application.bot.get_me()).username
     await application.bot.set_my_commands([
-        BotCommand("start", "শুরু করুন"),
-        BotCommand("stats", "📊 ড্যাশবোর্ড দেখুন"),
-        BotCommand("queue", "📦 কিউ দেখুন"),
-        BotCommand("clear", "🗑️ কিউ ক্লিয়ার"),
-        BotCommand("broadcast", "সবার কাছে মেসেজ দিন"),
-        BotCommand("ping", "🏓 বটের স্পিড চেক"),
-        BotCommand("help", "💡 হেল্প গাইড"),
-        BotCommand("cancel", "❌ কাজ বাতিল করুন")
+        BotCommand("start", "শুরু করুন"), BotCommand("stats", "📊 ড্যাশবোর্ড"),
+        BotCommand("queue", "📦 কিউ দেখুন"), BotCommand("clear", "🗑️ কিউ ক্লিয়ার"),
+        BotCommand("broadcast", "সবার কাছে মেসেজ দিন"), BotCommand("ping", "🏓 বটের পিং"),
+        BotCommand("help", "💡 হেল্প গাইড"), BotCommand("cancel", "❌ কাজ বাতিল করুন")
     ])
     application.job_queue.run_repeating(expiry_monitor, interval=600)
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    stats = storage["stats"]
-    uptime = str(datetime.now() - storage["start_time"]).split('.')[0]
+    
+    # 🗄️ Fetch Stats from DB
+    stats = await stats_col.find_one({"_id": "global_stats"}) or {"daily": 0, "weekly": 0, "total": 0}
+    q_count = await files_col.count_documents({"status": "queued"})
+    u_count = await users_col.count_documents({})
+    uptime = str(datetime.now() - sys_memory["start_time"]).split('.')[0]
+    
     await update.message.reply_text(
-        f"📊 <b>ড্যাশবোর্ড</b>\n━━━━━━━━━━\n✅ আজ পোস্ট: {stats['daily']}\n"
-        f"✅ এই সপ্তাহে: {stats['weekly']}\n✅ সর্বমোট: {stats['total']}\n"
-        f"📦 কিউতে আছে: {len(storage['queue'])}\n👥 মোট ইউজার (বট): {len(storage['users'])}\n⏱ আপটাইম: {uptime}", parse_mode='HTML')
+        f"📊 <b>MongoDB ড্যাশবোর্ড</b>\n━━━━━━━━━━\n✅ আজ পোস্ট: {stats.get('daily', 0)}\n"
+        f"✅ এই সপ্তাহে: {stats.get('weekly', 0)}\n✅ সর্বমোট: {stats.get('total', 0)}\n"
+        f"📦 কিউতে আছে: {q_count}\n👥 মোট ইউজার (বট): {u_count}\n⏱ আপটাইম: {uptime}", parse_mode='HTML')
+
+async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    q_count = await files_col.count_documents({"status": "queued"})
+    await update.message.reply_text(f"📦 কিউতে বর্তমানে <b>{q_count}</b> টি ফাইল আছে।", parse_mode='HTML')
+
+async def clear_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    await files_col.delete_many({"status": "queued"})
+    await update.message.reply_text("🗑️ <b>কিউ ক্লিয়ার করা হয়েছে!</b>", parse_mode='HTML')
 
 # ==========================================
 # ▶️ ৯. মেইন এক্সিকিউশন
@@ -449,8 +493,8 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("stats", show_stats))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("ping", cmd_ping))
-    app.add_handler(CommandHandler("queue", lambda u, c: u.message.reply_text(f"📦 কিউতে আছে: {len(storage['queue'])} টি")))
-    app.add_handler(CommandHandler("clear", lambda u, c: (storage.update({"queue": []}), u.message.reply_text("🗑️ Cleared!"))))
+    app.add_handler(CommandHandler("queue", show_queue))
+    app.add_handler(CommandHandler("clear", clear_queue))
 
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Document.ALL, start_upload)],
@@ -466,5 +510,5 @@ if __name__ == '__main__':
     )
 
     app.add_handler(conv_handler)
-    print("🚀 The Ultimate Enterprise CEO Edition is Running...")
+    print("🚀 The Ultimate Enterprise MongoDB Edition is Running...")
     app.run_polling()
