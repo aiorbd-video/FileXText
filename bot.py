@@ -1,6 +1,6 @@
-# ==============================
-# PART 1 — VIP FOUNDATION UPDATE
-# ==============================
+# ==========================================
+# PART 1 — UPGRADED VIP VPN BOT CORE
+# ==========================================
 
 import os
 import html
@@ -38,11 +38,11 @@ from telegram.ext import (
 from PIL import Image, ImageDraw, ImageFont
 
 
-# ==============================
+# ==========================================
 # CONFIG
-# ==============================
+# ==========================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 FORCE_CHANNELS = [i.strip() for i in os.getenv("FORCE_CHANNELS", "").split(",") if i.strip()]
 
 try:
@@ -51,7 +51,7 @@ except Exception:
     CHANNEL_IDS = []
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 MONGO_URI = os.getenv("MONGO_URI")
 db_client = AsyncIOMotorClient(MONGO_URI)
@@ -75,31 +75,38 @@ logging.basicConfig(
 ASK_SERVER, ASK_HOST, ASK_EXPIRY, ASK_CUSTOM, CONFIRM_ACTION, ASK_CUSTOM_TIME = range(6)
 
 
-# ==============================
+# ==========================================
 # ERROR HANDLER
-# ==============================
+# ==========================================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    tb_string = "".join(traceback.format_exception(None, context.error, context.error.__traceback__))
+    tb_string = "".join(
+        traceback.format_exception(None, context.error, context.error.__traceback__)
+    )
+    logging.error(tb_string)
+
     try:
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"❌ <b>BOT ERROR</b>\n<pre>{html.escape(tb_string[:2000])}</pre>",
+            text=f"❌ <b>BOT ERROR</b>\n<pre>{html.escape(tb_string[:3500])}</pre>",
             parse_mode="HTML"
         )
-    except:
+    except Exception:
         pass
 
 
-# ==============================
-# HELPERS
-# ==============================
+# ==========================================
+# BASIC HELPERS
+# ==========================================
 async def is_subscribed(bot, user_id):
+    if not FORCE_CHANNELS:
+        return True
+
     for channel in FORCE_CHANNELS:
         try:
             member = await bot.get_chat_member(channel, user_id)
             if member.status not in ["member", "administrator", "creator"]:
                 return False
-        except:
+        except Exception:
             return False
     return True
 
@@ -107,13 +114,14 @@ async def is_subscribed(bot, user_id):
 def clean_file_name(original_name):
     ext = original_name.split(".")[-1] if "." in original_name else "file"
     base = re.sub(r"[^a-zA-Z0-9 ]", " ", original_name.rsplit(".", 1)[0])
-    return f"{' '.join(base.split()).title()} Premium.{ext}"
+    base = " ".join(base.split()).strip().title()
+    return f"{base} Premium.{ext}"
 
 
 def detect_category(filename: str) -> str:
     n = filename.lower()
 
-    mapping = {
+    categories = {
         "Facebook": ["fb", "facebook"],
         "YouTube": ["yt", "youtube"],
         "Telegram": ["tg", "telegram"],
@@ -122,13 +130,12 @@ def detect_category(filename: str) -> str:
         "Instagram": ["insta", "instagram"],
         "Gaming": ["game", "gaming", "pubg", "freefire", "ff"],
         "Streaming": ["stream", "netflix", "prime", "hotstar", "disney"],
+        "Social": ["social"],
         "All Sites": []
     }
 
-    for label, keys in mapping.items():
-        if not keys:
-            continue
-        if any(k in n for k in keys):
+    for label, keys in categories.items():
+        if keys and any(k in n for k in keys):
             return label
     return "All Sites"
 
@@ -146,10 +153,10 @@ def parse_expiry(text):
 
     if "day" in text or "দিন" in text:
         return datetime.now() + timedelta(days=value)
+    if "week" in text or "সপ্তাহ" in text:
+        return datetime.now() + timedelta(days=value * 7)
     if "month" in text or "মাস" in text:
         return datetime.now() + timedelta(days=value * 30)
-    if "week" in text or "week" in text or "সপ্তাহ" in text:
-        return datetime.now() + timedelta(days=value * 7)
 
     return None
 
@@ -191,7 +198,7 @@ def get_server_keyboard():
         [
             InlineKeyboardButton("🌍 Auto", callback_data="srv_🌍Auto"),
             InlineKeyboardButton("⏭️ Skip", callback_data="srv_Skip"),
-        ]
+        ],
     ]
 
 
@@ -212,47 +219,58 @@ def get_expiry_keyboard():
         [
             InlineKeyboardButton("30 Days", callback_data="exp_30 Days"),
             InlineKeyboardButton("Unlimited", callback_data="exp_Skip"),
-        ]
+        ],
     ]
 
 
 def get_app_details(filename):
     name_lower = filename.lower()
+
     if name_lower.endswith(".hc"):
-        return "HTTP Custom", "https://play.google.com/store/apps/details?id=com.eweny.httpcustom", "১. <b>HTTP Custom</b> অ্যাপে (+) আইকনে ক্লিক করুন。\n২. Open Config থেকে ফাইলটি ইম্পোর্ট করে Connect করুন।"
+        return (
+            "HTTP Custom",
+            "https://play.google.com/store/apps/details?id=com.eweny.httpcustom",
+            "১. <b>HTTP Custom</b> অ্যাপে (+) আইকনে ক্লিক করুন।\n২. Open Config থেকে ফাইলটি ইম্পোর্ট করে Connect করুন।"
+        )
     elif name_lower.endswith(".dark"):
-        return "Dark Tunnel", "https://play.google.com/store/apps/details?id=com.darktunnel.android", "১. <b>Dark Tunnel</b> অ্যাপের উপরের ⚙️ আইকন থেকে Import করুন。\n২. Start বাটনে ক্লিক করে কানেক্ট করুন।"
+        return (
+            "Dark Tunnel",
+            "https://play.google.com/store/apps/details?id=com.darktunnel.android",
+            "১. <b>Dark Tunnel</b> অ্যাপের উপরের ⚙️ আইকন থেকে Import করুন।\n২. Start বাটনে ক্লিক করে কানেক্ট করুন।"
+        )
     elif name_lower.endswith(".nm"):
-        return "NetMod Syna", "https://play.google.com/store/apps/details?id=com.netmod.syna", "১. <b>NetMod</b> অ্যাপে 📁 আইকনে ক্লিক করে Import করুন。\n২. Start এ ক্লিক করে কানেক্ট করুন।"
+        return (
+            "NetMod Syna",
+            "https://play.google.com/store/apps/details?id=com.netmod.syna",
+            "১. <b>NetMod</b> অ্যাপে 📁 আইকনে ক্লিক করে Import করুন।\n২. Start এ ক্লিক করে কানেক্ট করুন।"
+        )
     elif name_lower.endswith(".sks"):
-        return "SSH Custom", "https://play.google.com/store/apps/details?id=com.sshc.custom", "১. <b>SSH Custom</b> অ্যাপে (+) আইকনে ক্লিক করে ফাইলটি ইম্পোর্ট করুন。\n২. Connect এ চাপুন।"
-    return "Premium VPN", "https://play.google.com/store/search?q=vpn", "১. আপনার ভিপিএন অ্যাপে ফাইলটি ইম্পোর্ট করে কানেক্ট করুন।"
+        return (
+            "SSH Custom",
+            "https://play.google.com/store/apps/details?id=com.sshc.custom",
+            "১. <b>SSH Custom</b> অ্যাপে (+) আইকনে ক্লিক করে ফাইলটি ইম্পোর্ট করুন।\n২. Connect এ চাপুন।"
+        )
+
+    return (
+        "Premium VPN",
+        "https://play.google.com/store/search?q=vpn",
+        "১. আপনার ভিপিএন অ্যাপে ফাইলটি ইম্পোর্ট করে কানেক্ট করুন।"
+    )
 
 
-def auto_thumbnail_bytes(file_info):
-    width, height = 1280, 720
-    img = Image.new("RGB", (width, height), (18, 18, 24))
-    draw = ImageDraw.Draw(img)
+def build_safe_link(bot_username: str, uid: str) -> str:
+    return f"https://t.me/{bot_username}?start=get_{uid}"
 
-    server = file_info.get("server") or "Auto Premium"
-    expiry = file_info.get("expiry_raw") or "Unlimited"
-    category = detect_category(file_info.get("name", ""))
-    ping = file_info.get("ping")
-    ping_text = f"{ping} ms" if ping else "Protected"
 
-    draw.rounded_rectangle((50, 50, 1230, 670), radius=40, outline=(255, 255, 255), width=4)
-    draw.text((90, 95), "VIP VPN CONFIG", fill=(255, 255, 255))
-    draw.text((90, 205), f"Server: {server}", fill=(255, 255, 255))
-    draw.text((90, 285), f"Category: {category}", fill=(255, 255, 255))
-    draw.text((90, 365), f"Expiry: {expiry}", fill=(255, 255, 255))
-    draw.text((90, 445), f"Ping: {ping_text}", fill=(255, 255, 255))
-    draw.text((90, 525), "Premium delivery • Safe link • Fast access", fill=(255, 255, 255))
-
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=92)
-    buf.seek(0)
-    buf.name = "thumbnail.jpg"
-    return buf
+async def log_analytics(event_name: str, payload: dict):
+    try:
+        await analytics_col.insert_one({
+            "event": event_name,
+            "payload": payload,
+            "created_at": datetime.now()
+        })
+    except Exception:
+        pass
 
 
 async def get_best_ping(host):
@@ -269,7 +287,7 @@ async def get_best_ping(host):
                 writer.close()
                 await writer.wait_closed()
                 best_ping = min(best_ping, ping_time)
-            except:
+            except Exception:
                 continue
 
     if best_ping != float("inf"):
@@ -282,36 +300,30 @@ async def get_best_ping(host):
     return random.randint(60, 90)
 
 
-async def log_analytics(event_name: str, payload: dict):
-    try:
-        await analytics_col.insert_one({
-            "event": event_name,
-            "payload": payload,
-            "created_at": datetime.now()
-        })
-    except:
-        pass
+def auto_thumbnail_bytes(file_info):
+    width, height = 1280, 720
+    img = Image.new("RGB", (width, height), (20, 20, 28))
+    draw = ImageDraw.Draw(img)
 
+    server = file_info.get("server") or "Auto Premium"
+    expiry = file_info.get("expiry_raw") or "Unlimited"
+    category = file_info.get("category") or detect_category(file_info.get("name", ""))
+    ping = file_info.get("ping")
+    ping_text = f"{ping} ms" if ping else "Protected"
 
-def get_admin_panel_keyboard():
-    return [
-        [
-            InlineKeyboardButton("📊 Stats", callback_data="admin_stats"),
-            InlineKeyboardButton("📦 Queue", callback_data="admin_queue"),
-        ],
-        [
-            InlineKeyboardButton("🚀 Post Now", callback_data="admin_post_now"),
-            InlineKeyboardButton("⏳ Schedule", callback_data="admin_schedule"),
-        ],
-        [
-            InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
-            InlineKeyboardButton("🗑 Clear Queue", callback_data="admin_clear_queue"),
-        ],
-    ]
+    draw.rounded_rectangle((50, 50, 1230, 670), radius=40, outline=(255, 255, 255), width=4)
+    draw.text((90, 90), "VIP VPN CONFIG", fill=(255, 255, 255))
+    draw.text((90, 190), f"Server: {server}", fill=(255, 255, 255))
+    draw.text((90, 270), f"Category: {category}", fill=(255, 255, 255))
+    draw.text((90, 350), f"Expiry: {expiry}", fill=(255, 255, 255))
+    draw.text((90, 430), f"Ping: {ping_text}", fill=(255, 255, 255))
+    draw.text((90, 520), "Premium delivery • Safe link • Fast access", fill=(255, 255, 255))
 
-
-def build_safe_link(bot_username: str, uid: str) -> str:
-    return f"https://t.me/{bot_username}?start=get_{uid}"
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=92)
+    buf.seek(0)
+    buf.name = "thumbnail.jpg"
+    return buf
 
 
 async def chunked_gather(tasks, limit=10):
@@ -322,24 +334,27 @@ async def chunked_gather(tasks, limit=10):
     return results
 
 
-# ==============================
+# ==========================================
 # AI CAPTION ENGINE
-# ==============================
+# ==========================================
 async def generate_ai_caption(file_info):
     app_name, play_store, setup = get_app_details(file_info["name"])
     category = detect_category(file_info["name"])
 
     filename_lower = file_info["name"].lower()
-    platforms = [p for p, k in [
-        ("Facebook", "fb"),
-        ("YouTube", "yt"),
-        ("Telegram", "tg"),
-        ("WhatsApp", "wa"),
-        ("TikTok", "tiktok"),
-        ("Instagram", "insta"),
-    ] if k in filename_lower]
-
+    platforms = [
+        p for p, k in [
+            ("Facebook", "fb"),
+            ("YouTube", "yt"),
+            ("Telegram", "tg"),
+            ("WhatsApp", "wa"),
+            ("TikTok", "tiktok"),
+            ("Instagram", "insta"),
+        ]
+        if k in filename_lower
+    ]
     platform_text = ", ".join(platforms) if platforms else "All Sites / Open Network"
+
     ping_status = f"🟢 <code>{file_info['ping']} ms</code>" if file_info.get("ping") else "🟠 <code>Protected</code>"
     expiry_text = f"\n┣ ⏳ <b>মেয়াদ:</b> <code>{file_info['expiry_raw']}</code>" if file_info.get("expiry_raw") else ""
 
@@ -349,24 +364,28 @@ async def generate_ai_caption(file_info):
         f"Write an engaging, highly attractive 3-line introductory text for a premium VPN config file "
         f"targeting '{platform_text}' and category '{category}'."
     )
-
     if admin_note:
         ai_prompt += f" Blend this admin note naturally: '{admin_note}'."
 
-    try:
-        res = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Write entirely in Bengali. Use emojis gracefully. Do NOT output system reports, raw filenames, or fake speeds."
-                },
-                {"role": "user", "content": ai_prompt},
-            ],
-            temperature=0.85,
-        )
-        intro = res.choices[0].message.content.strip()
-    except:
+    intro = None
+    if client:
+        try:
+            res = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Write entirely in Bengali. Use emojis gracefully. Do NOT output system reports, raw filenames, or fake speeds."
+                    },
+                    {"role": "user", "content": ai_prompt},
+                ],
+                temperature=0.85,
+            )
+            intro = res.choices[0].message.content.strip()
+        except Exception:
+            intro = None
+
+    if not intro:
         intro = "🔥 <b>নতুন প্রিমিয়াম হাই-স্পিড ভিপিএন ফাইল!</b> কোনো ল্যাগ ছাড়াই স্মুথ ইন্টারনেট এনজয় করুন।"
         if admin_note:
             intro += f"\n\n💡 <b>অ্যাডমিন নোট:</b> {admin_note}"
@@ -384,16 +403,36 @@ async def generate_ai_caption(file_info):
         f"🛠 <b>কীভাবে কানেক্ট করবেন?</b>\n"
         f"<i>{setup}</i>\n"
     )
-    # ==========================================
-# PART 2 — VIP ENTERPRISE ENGINE
-# ==========================================
+
 
 # ==========================================
-# INTERACTIVE UPLOAD SYSTEM
+# ADMIN UI HELPERS
+# ==========================================
+def get_admin_panel_keyboard():
+    return [
+        [
+            InlineKeyboardButton("📊 Stats", callback_data="admin_stats"),
+            InlineKeyboardButton("📦 Queue", callback_data="admin_queue"),
+        ],
+        [
+            InlineKeyboardButton("🚀 Post Now", callback_data="admin_post_now"),
+            InlineKeyboardButton("⏳ Schedule", callback_data="admin_schedule"),
+        ],
+        [
+            InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
+            InlineKeyboardButton("🗑 Clear Queue", callback_data="admin_clear_queue"),
+        ],
+    ]
+
+
+# ==========================================
+# UPLOAD CONVERSATION
 # ==========================================
 async def start_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+
+    if not update.message or not update.message.document:
         return ConversationHandler.END
 
     doc = update.message.document
@@ -413,211 +452,227 @@ async def start_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "posted_msgs": [],
         "status": "queued",
         "created_at": datetime.now(),
-        "category": detect_category(doc.file_name)
+        "category": detect_category(doc.file_name),
     }
 
     await update.message.reply_text(
         "🌍 <b>সার্ভার নির্বাচন করুন:</b>",
         reply_markup=InlineKeyboardMarkup(get_server_keyboard()),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
-
     return ASK_SERVER
 
 
 async def process_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if update.callback_query:
         await update.callback_query.answer()
-
         val = update.callback_query.data.replace("srv_", "")
         context.user_data["temp"]["server"] = None if val == "Skip" else val
-
         await update.callback_query.edit_message_text(
             f"🌍 সার্ভার: <b>{val}</b>",
-            parse_mode="HTML"
+            parse_mode="HTML",
         )
-
     else:
-        context.user_data["temp"]["server"] = update.message.text
+        context.user_data["temp"]["server"] = update.message.text.strip()
 
     await context.bot.send_message(
         chat_id=update.effective_user.id,
         text="🌐 <b>Host / Payload দিন:</b>",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏭️ Skip", callback_data="skip")]
+            [InlineKeyboardButton("⏭️ Skip", callback_data="skip_host")]
         ]),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
-
     return ASK_HOST
 
 
 async def process_host(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if update.callback_query:
         await update.callback_query.answer()
-
+        context.user_data["temp"]["host"] = None
+        await update.callback_query.edit_message_text("🌐 Host: <i>Skipped</i>", parse_mode="HTML")
     else:
-        context.user_data["temp"]["host"] = update.message.text.strip()
+        text = update.message.text.strip()
+        context.user_data["temp"]["host"] = text if text else None
 
     await context.bot.send_message(
         chat_id=update.effective_user.id,
         text="⏳ <b>Expiry নির্বাচন করুন:</b>",
         reply_markup=InlineKeyboardMarkup(get_expiry_keyboard()),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
-
     return ASK_EXPIRY
 
 
 async def process_expiry(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if update.callback_query:
-
         await update.callback_query.answer()
-
         val = update.callback_query.data.replace("exp_", "")
-
         if val == "Skip":
             context.user_data["temp"]["expiry_raw"] = None
             context.user_data["temp"]["expiry_date"] = None
         else:
             context.user_data["temp"]["expiry_raw"] = val
             context.user_data["temp"]["expiry_date"] = parse_expiry(val)
-
+        await update.callback_query.edit_message_text(
+            f"⏳ মেয়াদ: <b>{val}</b>",
+            parse_mode="HTML",
+        )
     else:
-        context.user_data["temp"]["expiry_raw"] = update.message.text
-        context.user_data["temp"]["expiry_date"] = parse_expiry(update.message.text)
+        text = update.message.text.strip()
+        context.user_data["temp"]["expiry_raw"] = text
+        context.user_data["temp"]["expiry_date"] = parse_expiry(text)
 
     await context.bot.send_message(
         chat_id=update.effective_user.id,
-        text="💬 <b>অ্যাডমিন নোট দিন:</b>",
+        text="💬 <b>অ্যাডমিন নোট / ইউজার মেসেজ (অপশনাল):</b>",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏭️ Skip", callback_data="skip")]
+            [InlineKeyboardButton("⏭️ Skip", callback_data="skip_custom")]
         ]),
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
-
     return ASK_CUSTOM
 
 
 async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if update.callback_query:
         await update.callback_query.answer()
-
+        context.user_data["temp"]["custom_msg"] = None
+        await update.callback_query.edit_message_text("💬 মেসেজ: <i>Skipped</i>", parse_mode="HTML")
     else:
-        context.user_data["temp"]["custom_msg"] = update.message.text
+        context.user_data["temp"]["custom_msg"] = update.message.text.strip()
 
-    msg = await context.bot.send_message(
+    status_msg = await context.bot.send_message(
         chat_id=update.effective_user.id,
-        text="⏳ <i>Processing...</i>",
-        parse_mode="HTML"
+        text="⏳ <i>ডেটা প্রসেসিং...</i>",
+        parse_mode="HTML",
     )
 
     f_data = context.user_data["temp"]
 
     if f_data.get("host"):
-        f_data["ping"] = await get_best_ping(f_data["host"])
+        try:
+            f_data["ping"] = await get_best_ping(f_data["host"])
+        except Exception:
+            f_data["ping"] = None
 
     await files_col.insert_one(f_data)
+    queue_count = await files_col.count_documents({"status": "queued"})
 
-    queue_count = await files_col.count_documents({
-        "status": "queued"
-    })
-
-    keyboard = [
-        [
-            InlineKeyboardButton("🚀 POST NOW", callback_data="act_now")
-        ],
-        [
-            InlineKeyboardButton("⏳ 1H", callback_data="act_1h"),
-            InlineKeyboardButton("⏳ 3H", callback_data="act_3h")
-        ],
-        [
-            InlineKeyboardButton("🗑 CLEAR QUEUE", callback_data="act_clear")
-        ]
-    ]
-
-    await msg.edit_text(
-        f"✅ <b>QUEUE READY</b>\n\n"
+    receipt = (
+        f"✅ <b>ফাইল ডাটাবেসে রেডি!</b>\n"
         f"📄 <code>{clean_file_name(f_data['name'])}</code>\n"
-        f"📦 Queue: <b>{queue_count}</b>",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
+        f"📦 কিউ: <b>{queue_count}</b> টি"
     )
 
+    keyboard = [
+        [InlineKeyboardButton("🚀 পোস্ট করুন (এখনই)", callback_data="act_now")],
+        [
+            InlineKeyboardButton("⏳ ১ ঘণ্টা পর", callback_data="act_1h"),
+            InlineKeyboardButton("⏳ ৩ ঘণ্টা পর", callback_data="act_3h"),
+        ],
+        [InlineKeyboardButton("⏱️ কাস্টম সময়", callback_data="act_custom")],
+        [InlineKeyboardButton("🗑️ কিউ ক্লিয়ার", callback_data="act_clear")],
+    ]
+
+    await status_msg.edit_text(
+        receipt,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML",
+    )
     return CONFIRM_ACTION
 
 
 # ==========================================
-# ACTION HANDLER
+# CONFIRM ACTION
 # ==========================================
 async def handle_confirm_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     query = update.callback_query
     await query.answer()
 
+    user_id = update.effective_user.id
+
     if query.data == "act_now":
-
-        await query.edit_message_text(
-            "🚀 <b>Posting started...</b>",
-            parse_mode="HTML"
-        )
-
-        await execute_posting(context, update.effective_user.id)
+        await query.edit_message_text("⚡ <b>পোস্টিং শুরু হচ্ছে...</b>", parse_mode="HTML")
+        await execute_posting(context, user_id)
+        return ConversationHandler.END
 
     elif query.data == "act_1h":
-
-        context.job_queue.run_once(
-            scheduled_post_job,
-            3600,
-            data={"user_id": update.effective_user.id}
-        )
-
-        await query.edit_message_text(
-            "⏳ পোস্ট ১ ঘণ্টা পর হবে।",
-            parse_mode="HTML"
-        )
+        context.job_queue.run_once(scheduled_post_job, 3600, data={"user_id": user_id})
+        await query.edit_message_text("✅ <b>১ ঘণ্টা পর পোস্ট হবে।</b>", parse_mode="HTML")
+        return ConversationHandler.END
 
     elif query.data == "act_3h":
-
-        context.job_queue.run_once(
-            scheduled_post_job,
-            10800,
-            data={"user_id": update.effective_user.id}
-        )
-
-        await query.edit_message_text(
-            "⏳ পোস্ট ৩ ঘণ্টা পর হবে।",
-            parse_mode="HTML"
-        )
+        context.job_queue.run_once(scheduled_post_job, 10800, data={"user_id": user_id})
+        await query.edit_message_text("✅ <b>৩ ঘণ্টা পর পোস্ট হবে।</b>", parse_mode="HTML")
+        return ConversationHandler.END
 
     elif query.data == "act_clear":
+        await files_col.delete_many({"status": "queued"})
+        await query.edit_message_text("🗑️ <b>কিউ ক্লিয়ার করা হয়েছে।</b>", parse_mode="HTML")
+        return ConversationHandler.END
 
-        await files_col.delete_many({
-            "status": "queued"
-        })
-
+    elif query.data == "act_custom":
         await query.edit_message_text(
-            "🗑 Queue cleared.",
-            parse_mode="HTML"
+            "⏱️ <b>কয়টায় পোস্ট হবে? (HH:MM, যেমন: 20:30)</b>",
+            parse_mode="HTML",
         )
+        return ASK_CUSTOM_TIME
 
     return ConversationHandler.END
 
 
-# ==========================================
-# BULK POST ENGINE
-# ==========================================
-async def send_post_to_channel(context, channel_id, final_caption, thumb):
+async def process_custom_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    time_str = update.message.text.strip()
+    try:
+        target_time = datetime.strptime(time_str, "%H:%M").time()
+        now = datetime.now()
+        target_dt = datetime.combine(now.date(), target_time)
+        if target_dt <= now:
+            target_dt += timedelta(days=1)
 
+        delay = (target_dt - now).total_seconds()
+        context.job_queue.run_once(
+            scheduled_post_job,
+            delay,
+            data={"user_id": update.effective_user.id}
+        )
+        await update.message.reply_text(
+            f"✅ <b>পোস্টটি ঠিক {time_str} টায় শিডিউল করা হয়েছে!</b>",
+            parse_mode="HTML",
+        )
+    except ValueError:
+        await update.message.reply_text(
+            "❌ <b>ভুল ফরম্যাট!</b> দয়া করে 14:30 বা 09:15 এভাবে লিখুন।",
+            parse_mode="HTML",
+        )
+        return ASK_CUSTOM_TIME
+
+    return ConversationHandler.END
+
+
+async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ বাতিল করা হয়েছে।", parse_mode="HTML")
+    return ConversationHandler.END
+    # ==========================================
+# PART 2 — DELIVERY / ANALYTICS / MAIN
+# ==========================================
+
+
+# ==========================================
+# POSTING ENGINE
+# ==========================================
+async def send_post_to_channel(
+    context,
+    channel_id,
+    caption,
+    thumb,
+):
     return await context.bot.send_photo(
         chat_id=channel_id,
         photo=thumb,
-        caption=final_caption,
-        parse_mode="HTML"
+        caption=caption,
+        parse_mode="HTML",
     )
 
 
@@ -628,6 +683,10 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     }).to_list(length=None)
 
     if not files_to_post:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="❌ Queue empty.",
+        )
         return
 
     total_posts = 0
@@ -645,7 +704,7 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 
             final_caption = (
                 f"{caption}\n"
-                f"🔗 <a href='{url}'><b>📥 Download File</b></a>"
+                f"🔗 <a href='{url}'><b>📥 ডাউনলোড ফাইল</b></a>"
             )
 
             thumb = auto_thumbnail_bytes(f)
@@ -653,13 +712,12 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
             tasks = []
 
             for channel_id in CHANNEL_IDS:
-
                 tasks.append(
                     send_post_to_channel(
                         context,
                         channel_id,
                         final_caption,
-                        thumb
+                        thumb,
                     )
                 )
 
@@ -683,7 +741,7 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
                     "$set": {
                         "status": "posted",
                         "posted_msgs": posted_records,
-                        "posted_at": datetime.now()
+                        "posted_at": datetime.now(),
                     }
                 }
             )
@@ -695,7 +753,7 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
                 {
                     "uid": f["uid"],
                     "server": f.get("server"),
-                    "category": f.get("category")
+                    "category": f.get("category"),
                 }
             )
 
@@ -703,8 +761,11 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
 
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
-                text=f"❌ POST ERROR\n<pre>{html.escape(str(e))}</pre>",
-                parse_mode="HTML"
+                text=(
+                    f"❌ <b>POST ERROR</b>\n"
+                    f"<pre>{html.escape(str(e))}</pre>"
+                ),
+                parse_mode="HTML",
             )
 
     await stats_col.update_one(
@@ -713,16 +774,19 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
             "$inc": {
                 "daily": total_posts,
                 "weekly": total_posts,
-                "total": total_posts
+                "total": total_posts,
             }
         },
-        upsert=True
+        upsert=True,
     )
 
     await context.bot.send_message(
         chat_id=user_id,
-        text=f"🏁 <b>POST COMPLETE</b>\n\n✅ Total Posts: {total_posts}",
-        parse_mode="HTML"
+        text=(
+            f"🏁 <b>POST COMPLETE</b>\n\n"
+            f"✅ Total Posts: <b>{total_posts}</b>"
+        ),
+        parse_mode="HTML",
     )
 
 
@@ -734,7 +798,9 @@ async def scheduled_post_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==========================================
-# AUTO EXPIRED DELETE
+# EXPIRY MONITOR
+# CHANNEL POST থাকবে
+# DB DATA DELETE হবে
 # ==========================================
 async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
 
@@ -742,74 +808,88 @@ async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
 
     expired_files = await files_col.find({
         "expiry_date": {"$lt": now},
-        "reported": False,
-        "status": "posted"
+        "status": "posted",
     }).to_list(length=None)
 
     for f in expired_files:
 
-        for posted in f.get("posted_msgs", []):
+        try:
 
-            try:
-                channel_id, message_id = posted
+            report = (
+                f"📊 <b>EXPIRY REPORT</b>\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"📄 <code>{f['name']}</code>\n"
+                f"🌍 Server: <b>{f.get('server')}</b>\n"
+                f"👥 Downloads: <b>{f.get('downloads', 0)}</b>\n\n"
+                f"🗑 Database থেকে remove করা হয়েছে\n"
+                f"📌 Channel post active আছে"
+            )
 
-                await context.bot.delete_message(
-                    channel_id,
-                    message_id
-                )
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=report,
+                parse_mode="HTML",
+            )
 
-            except:
-                pass
+            # DELETE FILE DATA
+            await files_col.delete_one({
+                "uid": f["uid"]
+            })
 
-        rep = (
-            f"📊 <b>EXPIRY REPORT</b>\n"
-            f"━━━━━━━━━━━━━━\n"
-            f"📄 <code>{f['name']}</code>\n"
-            f"👥 Downloads: <b>{f.get('downloads', 0)}</b>\n"
-            f"🗑 Auto deleted from channels."
-        )
-
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=rep,
-            parse_mode="HTML"
-        )
-
-        await files_col.update_one(
-            {"uid": f["uid"]},
-            {
-                "$set": {
-                    "reported": True,
-                    "status": "expired"
+            await log_analytics(
+                "expired_deleted",
+                {
+                    "uid": f["uid"],
+                    "downloads": f.get("downloads", 0),
                 }
-            }
-        )
+            )
+
+        except Exception as e:
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"❌ Expiry Error\n<pre>{html.escape(str(e))}</pre>",
+                parse_mode="HTML",
+            )
 
 
 # ==========================================
-# AUTO CLEANUP
+# AUTO CLEANUP ANALYTICS
 # ==========================================
 async def auto_cleanup(context: ContextTypes.DEFAULT_TYPE):
 
-    old_date = datetime.now() - timedelta(days=30)
+    try:
 
-    result = await files_col.delete_many({
-        "created_at": {
-            "$lt": old_date
-        },
-        "status": "expired"
-    })
+        old_date = datetime.now() - timedelta(days=45)
 
-    if result.deleted_count > 0:
+        result = await analytics_col.delete_many({
+            "created_at": {
+                "$lt": old_date
+            }
+        })
+
+        if result.deleted_count > 0:
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    f"🧹 <b>Analytics Cleanup</b>\n"
+                    f"Deleted: {result.deleted_count}"
+                ),
+                parse_mode="HTML",
+            )
+
+    except Exception as e:
 
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"🧹 Cleanup completed.\nDeleted: {result.deleted_count} files."
+            text=f"❌ Cleanup Error\n<pre>{html.escape(str(e))}</pre>",
+            parse_mode="HTML",
         )
 
 
 # ==========================================
-# SAFE DELIVERY
+# SAFE FILE DELIVERY
 # ==========================================
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -818,11 +898,19 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await users_col.update_one(
         {"_id": user_id},
-        {"$set": {"_id": user_id}},
-        upsert=True
+        {
+            "$set": {
+                "_id": user_id,
+                "last_seen": datetime.now(),
+            }
+        },
+        upsert=True,
     )
 
     if not args:
+        await update.message.reply_text(
+            "👋 Welcome to VIP VPN BOT"
+        )
         return
 
     if not args[0].startswith("get_"):
@@ -834,43 +922,65 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "uid": uid
     })
 
+    # EXPIRED / REMOVED
     if not f:
-        await update.message.reply_text("❌ File not found.")
-        return
-
-    if f.get("expiry_date") and datetime.now() > f["expiry_date"]:
 
         await update.message.reply_text(
-            "⚠️ এই ফাইলের মেয়াদ শেষ হয়েছে।",
-            parse_mode="HTML"
+            "⚠️ <b>এই VPN Config এর মেয়াদ শেষ হয়েছে।</b>\n\n"
+            "🔄 নতুন আপডেটেড ফাইলের জন্য চ্যানেল চেক করুন।",
+            parse_mode="HTML",
         )
         return
 
+    # FORCE JOIN
     if not await is_subscribed(context.bot, user_id):
 
-        btns = [
-            [
+        buttons = []
+
+        for i, ch in enumerate(FORCE_CHANNELS):
+            buttons.append([
                 InlineKeyboardButton(
                     f"📢 Channel {i+1}",
-                    url=f"https://t.me/{c.replace('@', '')}"
+                    url=f"https://t.me/{ch.replace('@', '')}"
                 )
-            ]
-            for i, c in enumerate(FORCE_CHANNELS)
-        ]
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                "🔄 JOINED",
+                url=build_safe_link(
+                    sys_memory["bot_username"],
+                    uid
+                )
+            )
+        ])
 
         await update.message.reply_text(
-            "❌ আগে চ্যানেলে জয়েন করুন।",
-            reply_markup=InlineKeyboardMarkup(btns),
-            parse_mode="HTML"
+            "❌ <b>ফাইল পেতে আগে চ্যানেলে জয়েন করুন।</b>",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="HTML",
+        )
+        return
+
+    # DOWNLOAD LIMIT
+    if f.get("downloads", 0) >= 1000:
+
+        await update.message.reply_text(
+            "⚠️ Download limit exceeded."
         )
         return
 
     try:
 
-        file_obj = await context.bot.get_file(f["id"])
+        msg = await update.message.reply_text(
+            "📥 <i>ফাইল প্রস্তুত হচ্ছে...</i>",
+            parse_mode="HTML",
+        )
+
+        telegram_file = await context.bot.get_file(f["id"])
 
         stream = io.BytesIO(
-            await file_obj.download_as_bytearray()
+            await telegram_file.download_as_bytearray()
         )
 
         stream.name = clean_file_name(f["name"])
@@ -878,16 +988,17 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         app_name, play_store, setup = get_app_details(f["name"])
 
         caption = (
-            f"✅ <b>Your File is Ready</b>\n\n"
-            f"🛡 App: <code>{app_name}</code>\n"
-            f"🔗 <a href='{play_store}'>Download App</a>\n\n"
+            f"✅ <b>আপনার ফাইল প্রস্তুত</b>\n\n"
+            f"🛡 অ্যাপ: <code>{app_name}</code>\n"
+            f"🔗 <a href='{play_store}'>অ্যাপ ডাউনলোড করুন</a>\n\n"
+            f"🛠 <b>Setup Guide:</b>\n"
             f"{setup}"
         )
 
         await update.message.reply_document(
             document=stream,
             caption=caption,
-            parse_mode="HTML"
+            parse_mode="HTML",
         )
 
         await files_col.update_one(
@@ -903,9 +1014,11 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "download",
             {
                 "uid": uid,
-                "user": user_id
+                "user": user_id,
             }
         )
+
+        await msg.delete()
 
     except Exception as e:
 
@@ -915,7 +1028,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==========================================
-# BROADCAST
+# BROADCAST SYSTEM
 # ==========================================
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -927,7 +1040,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
 
         await update.message.reply_text(
-            "/broadcast message"
+            "ব্যবহার:\n/broadcast আপনার মেসেজ"
         )
         return
 
@@ -935,13 +1048,13 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tasks = []
 
-    for u in users:
+    for user in users:
 
         tasks.append(
             context.bot.send_message(
-                chat_id=u["_id"],
+                chat_id=user["_id"],
                 text=f"📢 <b>ADMIN NOTICE</b>\n\n{text}",
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
         )
 
@@ -953,12 +1066,16 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        f"✅ Broadcast sent: {success}/{len(users)}"
+        (
+            f"✅ <b>Broadcast Complete</b>\n"
+            f"📨 Sent: {success}/{len(users)}"
+        ),
+        parse_mode="HTML",
     )
 
 
 # ==========================================
-# ADVANCED STATS
+# STATS
 # ==========================================
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -972,9 +1089,8 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_users = await users_col.count_documents({})
     queued = await files_col.count_documents({"status": "queued"})
     posted = await files_col.count_documents({"status": "posted"})
-    expired = await files_col.count_documents({"status": "expired"})
 
-    top_server_pipeline = [
+    pipeline = [
         {
             "$group": {
                 "_id": "$server",
@@ -982,7 +1098,9 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         },
         {
-            "$sort": {"count": -1}
+            "$sort": {
+                "count": -1
+            }
         },
         {
             "$limit": 1
@@ -990,7 +1108,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     top_server_data = await files_col.aggregate(
-        top_server_pipeline
+        pipeline
     ).to_list(length=1)
 
     top_server = "N/A"
@@ -1005,23 +1123,25 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (
         f"📊 <b>VIP DASHBOARD</b>\n"
         f"━━━━━━━━━━━━━━\n"
-        f"👥 Users: {total_users}\n"
-        f"📦 Queue: {queued}\n"
-        f"🚀 Posted: {posted}\n"
-        f"🗑 Expired: {expired}\n"
-        f"🌍 Top Server: {top_server}\n"
-        f"📈 Total Posts: {stats.get('total', 0)}\n"
-        f"⏱ Uptime: {uptime}"
+        f"👥 Users: <b>{total_users}</b>\n"
+        f"📦 Queue: <b>{queued}</b>\n"
+        f"🚀 Posted: <b>{posted}</b>\n"
+        f"🌍 Top Server: <b>{top_server}</b>\n"
+        f"📈 Total Posts: <b>{stats.get('total', 0)}</b>\n"
+        f"⏱ Uptime: <b>{uptime}</b>"
     )
 
     await update.message.reply_text(
         txt,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            get_admin_panel_keyboard()
+        )
     )
 
 
 # ==========================================
-# QUEUE / CLEAR
+# QUEUE VIEW
 # ==========================================
 async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -1034,7 +1154,9 @@ async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not files:
 
-        await update.message.reply_text("Queue empty.")
+        await update.message.reply_text(
+            "📦 Queue empty."
+        )
         return
 
     txt = "📦 <b>QUEUE FILES</b>\n\n"
@@ -1043,15 +1165,19 @@ async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         txt += (
             f"{i}. <code>{f['name']}</code>\n"
-            f"🌍 {f.get('server')}\n\n"
+            f"🌍 {f.get('server')}\n"
+            f"🏷 {f.get('category')}\n\n"
         )
 
     await update.message.reply_text(
         txt,
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
 
 
+# ==========================================
+# CLEAR QUEUE
+# ==========================================
 async def clear_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
@@ -1062,7 +1188,11 @@ async def clear_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     })
 
     await update.message.reply_text(
-        f"🗑 Cleared: {result.deleted_count}"
+        (
+            f"🗑 <b>Queue Cleared</b>\n"
+            f"Deleted: {result.deleted_count}"
+        ),
+        parse_mode="HTML",
     )
 
 
@@ -1082,7 +1212,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         txt,
-        parse_mode="HTML"
+        parse_mode="HTML",
     )
 
 
@@ -1099,6 +1229,65 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.edit_text(
         f"🏓 Pong: {round((end - start) * 1000)} ms"
     )
+
+
+# ==========================================
+# ADMIN CALLBACKS
+# ==========================================
+async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    data = query.data
+
+    if data == "admin_stats":
+
+        stats = await stats_col.find_one({
+            "_id": "global_stats"
+        }) or {}
+
+        await query.edit_message_text(
+            (
+                f"📊 Total Posts: {stats.get('total', 0)}\n"
+                f"🚀 Daily: {stats.get('daily', 0)}\n"
+                f"📅 Weekly: {stats.get('weekly', 0)}"
+            )
+        )
+
+    elif data == "admin_queue":
+
+        q = await files_col.count_documents({
+            "status": "queued"
+        })
+
+        await query.edit_message_text(
+            f"📦 Queue: {q}"
+        )
+
+    elif data == "admin_clear_queue":
+
+        result = await files_col.delete_many({
+            "status": "queued"
+        })
+
+        await query.edit_message_text(
+            f"🗑 Cleared: {result.deleted_count}"
+        )
+
+    elif data == "admin_post_now":
+
+        await query.edit_message_text(
+            "🚀 Posting started..."
+        )
+
+        await execute_posting(
+            context,
+            ADMIN_ID
+        )
 
 
 # ==========================================
@@ -1119,14 +1308,16 @@ async def bot_init(application: Application):
         BotCommand("help", "Help"),
     ])
 
+    # EXPIRY CHECK
     application.job_queue.run_repeating(
         expiry_monitor,
-        interval=600
+        interval=600,
     )
 
+    # CLEANUP
     application.job_queue.run_repeating(
         auto_cleanup,
-        interval=86400
+        interval=86400,
     )
 
 
@@ -1144,6 +1335,7 @@ if __name__ == "__main__":
 
     app.add_error_handler(error_handler)
 
+    # COMMANDS
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("broadcast", broadcast_message))
     app.add_handler(CommandHandler("stats", show_stats))
@@ -1152,6 +1344,15 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("queue", show_queue))
     app.add_handler(CommandHandler("clear", clear_queue))
 
+    # ADMIN CALLBACKS
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_callbacks,
+            pattern="^admin_"
+        )
+    )
+
+    # CONVERSATION
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(
@@ -1179,7 +1380,7 @@ if __name__ == "__main__":
                 ),
                 CallbackQueryHandler(
                     process_host,
-                    pattern="^skip$"
+                    pattern="^skip_host$"
                 )
             ],
 
@@ -1201,7 +1402,7 @@ if __name__ == "__main__":
                 ),
                 CallbackQueryHandler(
                     process_custom_msg,
-                    pattern="^skip$"
+                    pattern="^skip_custom$"
                 )
             ],
 
@@ -1211,8 +1412,20 @@ if __name__ == "__main__":
                     pattern="^act_"
                 )
             ],
+
+            ASK_CUSTOM_TIME: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    process_custom_time
+                )
+            ],
         },
-        fallbacks=[]
+        fallbacks=[
+            CommandHandler(
+                "cancel",
+                cancel_upload
+            )
+        ],
     )
 
     app.add_handler(conv_handler)
