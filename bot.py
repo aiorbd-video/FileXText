@@ -12,7 +12,6 @@ import asyncio
 import re
 import uuid
 import io
-from collections import Counter
 from datetime import datetime, timedelta
 
 from openai import AsyncOpenAI
@@ -300,10 +299,67 @@ async def get_best_ping(host):
     return random.randint(60, 90)
 
 
+def _load_font(size: int, bold: bool = False):
+    """
+    Try to load a readable TrueType font.
+    Falls back to default if system font is unavailable.
+    """
+    font_candidates = []
+    if bold:
+        font_candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "arialbd.ttf",
+            "arial.ttf",
+        ]
+    else:
+        font_candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "arial.ttf",
+        ]
+
+    for path in font_candidates:
+        try:
+            return ImageFont.truetype(path, size=size)
+        except Exception:
+            continue
+
+    return ImageFont.load_default()
+
+
 def auto_thumbnail_bytes(file_info):
+    """
+    Large readable thumbnail for mobile.
+    Big text, clean layout, high contrast.
+    """
     width, height = 1280, 720
-    img = Image.new("RGB", (width, height), (20, 20, 28))
+    img = Image.new("RGB", (width, height), (12, 16, 28))
     draw = ImageDraw.Draw(img)
+
+    # Soft vertical gradient
+    for y in range(height):
+        r = int(10 + (y / height) * 25)
+        g = int(15 + (y / height) * 35)
+        b = int(30 + (y / height) * 60)
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+
+    # Main card
+    draw.rounded_rectangle(
+        (40, 40, 1240, 680),
+        radius=40,
+        fill=(18, 24, 40),
+        outline=(255, 255, 255),
+        width=4
+    )
+
+    title_font = _load_font(56, bold=True)
+    badge_font = _load_font(30, bold=True)
+    label_font = _load_font(32, bold=True)
+    value_font = _load_font(40, bold=True)
+    footer_font = _load_font(24, bold=False)
 
     server = file_info.get("server") or "Auto Premium"
     expiry = file_info.get("expiry_raw") or "Unlimited"
@@ -311,18 +367,56 @@ def auto_thumbnail_bytes(file_info):
     ping = file_info.get("ping")
     ping_text = f"{ping} ms" if ping else "Protected"
 
-    draw.rounded_rectangle((50, 50, 1230, 670), radius=40, outline=(255, 255, 255), width=4)
-    draw.text((90, 90), "VIP VPN CONFIG", fill=(255, 255, 255))
-    draw.text((90, 190), f"Server: {server}", fill=(255, 255, 255))
-    draw.text((90, 270), f"Category: {category}", fill=(255, 255, 255))
-    draw.text((90, 350), f"Expiry: {expiry}", fill=(255, 255, 255))
-    draw.text((90, 430), f"Ping: {ping_text}", fill=(255, 255, 255))
-    draw.text((90, 520), "Premium delivery • Safe link • Fast access", fill=(255, 255, 255))
+    # Header title
+    draw.text((80, 70), "VIP VPN CONFIG", font=title_font, fill=(255, 255, 255))
+    draw.text((980, 78), "ENTERPRISE", font=badge_font, fill=(0, 255, 180))
+
+    # Decorative line
+    draw.line([(80, 155), (1180, 155)], fill=(0, 255, 180), width=5)
+
+    # Info blocks
+    info_data = [
+        ("🌍 SERVER", server),
+        ("🏷 CATEGORY", category),
+        ("⏳ EXPIRY", expiry),
+        ("⚡ PING", ping_text),
+    ]
+
+    start_y = 185
+    for label, value in info_data:
+        draw.rounded_rectangle(
+            (80, start_y, 1180, start_y + 92),
+            radius=22,
+            fill=(28, 36, 58)
+        )
+
+        draw.text(
+            (110, start_y + 20),
+            label,
+            font=label_font,
+            fill=(0, 255, 180)
+        )
+
+        draw.text(
+            (420, start_y + 15),
+            str(value),
+            font=value_font,
+            fill=(255, 255, 255)
+        )
+
+        start_y += 106
+
+    draw.text(
+        (80, 620),
+        "Premium Secure Delivery • Ultra Fast Access • Safe Link",
+        font=footer_font,
+        fill=(180, 180, 180)
+    )
 
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=92)
+    img.save(buf, format="JPEG", quality=96)
     buf.seek(0)
-    buf.name = "thumbnail.jpg"
+    buf.name = "vip_thumbnail.jpg"
     return buf
 
 
@@ -658,29 +752,24 @@ async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # PART 2 — DELIVERY / ANALYTICS / MAIN
 # ==========================================
 
-
 # ==========================================
 # POSTING ENGINE
 # ==========================================
-async def send_post_to_channel(
-    context,
-    channel_id,
-    caption,
-    thumb,
-):
+async def send_post_to_channel(context, channel_id, caption, thumb_bytes):
+    thumb_stream = io.BytesIO(thumb_bytes)
+    thumb_stream.name = "vip_thumbnail.jpg"
+    thumb_stream.seek(0)
+
     return await context.bot.send_photo(
         chat_id=channel_id,
-        photo=thumb,
+        photo=thumb_stream,
         caption=caption,
         parse_mode="HTML",
     )
 
 
 async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
-
-    files_to_post = await files_col.find({
-        "status": "queued"
-    }).to_list(length=None)
+    files_to_post = await files_col.find({"status": "queued"}).to_list(length=None)
 
     if not files_to_post:
         await context.bot.send_message(
@@ -692,9 +781,7 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     total_posts = 0
 
     for f in files_to_post:
-
         try:
-
             caption = await generate_ai_caption(f)
 
             url = build_safe_link(
@@ -708,32 +795,39 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
             )
 
             thumb = auto_thumbnail_bytes(f)
+            thumb_bytes = thumb.getvalue()
 
             tasks = []
-
             for channel_id in CHANNEL_IDS:
                 tasks.append(
                     send_post_to_channel(
                         context,
                         channel_id,
                         final_caption,
-                        thumb,
+                        thumb_bytes,
                     )
                 )
 
             results = await chunked_gather(tasks, limit=5)
 
             posted_records = []
+            success_channels = []
+            failed_channels = []
 
             for idx, res in enumerate(results):
+                channel_id = CHANNEL_IDS[idx]
 
                 if isinstance(res, Exception):
+                    failed_channels.append(
+                        f"{channel_id} -> {str(res)[:80]}"
+                    )
                     continue
 
                 posted_records.append([
-                    CHANNEL_IDS[idx],
+                    channel_id,
                     res.message_id
                 ])
+                success_channels.append(channel_id)
 
             await files_col.update_one(
                 {"uid": f["uid"]},
@@ -754,11 +848,36 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
                     "uid": f["uid"],
                     "server": f.get("server"),
                     "category": f.get("category"),
+                    "success_channels": success_channels,
+                    "failed_channels": failed_channels,
                 }
             )
 
-        except Exception as e:
+            report = (
+                f"📡 <b>POST STATUS REPORT</b>\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"📄 <code>{f['name']}</code>\n\n"
+                f"✅ Success: <b>{len(success_channels)}</b>\n"
+                f"❌ Failed: <b>{len(failed_channels)}</b>\n"
+            )
 
+            if success_channels:
+                report += "\n🟢 <b>Working Channels</b>\n"
+                for ch in success_channels:
+                    report += f"• <code>{ch}</code>\n"
+
+            if failed_channels:
+                report += "\n🔴 <b>Failed Channels</b>\n"
+                for fail in failed_channels[:10]:
+                    report += f"• <code>{fail}</code>\n"
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=report,
+                parse_mode="HTML",
+            )
+
+        except Exception as e:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=(
@@ -803,7 +922,6 @@ async def scheduled_post_job(context: ContextTypes.DEFAULT_TYPE):
 # DB DATA DELETE হবে
 # ==========================================
 async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
-
     now = datetime.now()
 
     expired_files = await files_col.find({
@@ -812,9 +930,7 @@ async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
     }).to_list(length=None)
 
     for f in expired_files:
-
         try:
-
             report = (
                 f"📊 <b>EXPIRY REPORT</b>\n"
                 f"━━━━━━━━━━━━━━\n"
@@ -831,7 +947,6 @@ async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML",
             )
 
-            # DELETE FILE DATA
             await files_col.delete_one({
                 "uid": f["uid"]
             })
@@ -845,7 +960,6 @@ async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
             )
 
         except Exception as e:
-
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=f"❌ Expiry Error\n<pre>{html.escape(str(e))}</pre>",
@@ -857,9 +971,7 @@ async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
 # AUTO CLEANUP ANALYTICS
 # ==========================================
 async def auto_cleanup(context: ContextTypes.DEFAULT_TYPE):
-
     try:
-
         old_date = datetime.now() - timedelta(days=45)
 
         result = await analytics_col.delete_many({
@@ -869,7 +981,6 @@ async def auto_cleanup(context: ContextTypes.DEFAULT_TYPE):
         })
 
         if result.deleted_count > 0:
-
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=(
@@ -880,7 +991,6 @@ async def auto_cleanup(context: ContextTypes.DEFAULT_TYPE):
             )
 
     except Exception as e:
-
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=f"❌ Cleanup Error\n<pre>{html.escape(str(e))}</pre>",
@@ -892,7 +1002,6 @@ async def auto_cleanup(context: ContextTypes.DEFAULT_TYPE):
 # SAFE FILE DELIVERY
 # ==========================================
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     args = context.args
     user_id = update.effective_user.id
 
@@ -922,9 +1031,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "uid": uid
     })
 
-    # EXPIRED / REMOVED
     if not f:
-
         await update.message.reply_text(
             "⚠️ <b>এই VPN Config এর মেয়াদ শেষ হয়েছে।</b>\n\n"
             "🔄 নতুন আপডেটেড ফাইলের জন্য চ্যানেল চেক করুন।",
@@ -932,9 +1039,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # FORCE JOIN
     if not await is_subscribed(context.bot, user_id):
-
         buttons = []
 
         for i, ch in enumerate(FORCE_CHANNELS):
@@ -962,16 +1067,13 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # DOWNLOAD LIMIT
     if f.get("downloads", 0) >= 1000:
-
         await update.message.reply_text(
             "⚠️ Download limit exceeded."
         )
         return
 
     try:
-
         msg = await update.message.reply_text(
             "📥 <i>ফাইল প্রস্তুত হচ্ছে...</i>",
             parse_mode="HTML",
@@ -982,7 +1084,6 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stream = io.BytesIO(
             await telegram_file.download_as_bytearray()
         )
-
         stream.name = clean_file_name(f["name"])
 
         app_name, play_store, setup = get_app_details(f["name"])
@@ -1021,7 +1122,6 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.delete()
 
     except Exception as e:
-
         await update.message.reply_text(
             f"❌ Error: {e}"
         )
@@ -1031,14 +1131,12 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # BROADCAST SYSTEM
 # ==========================================
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if update.effective_user.id != ADMIN_ID:
         return
 
     text = " ".join(context.args)
 
     if not text:
-
         await update.message.reply_text(
             "ব্যবহার:\n/broadcast আপনার মেসেজ"
         )
@@ -1047,9 +1145,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = await users_col.find({}).to_list(length=None)
 
     tasks = []
-
     for user in users:
-
         tasks.append(
             context.bot.send_message(
                 chat_id=user["_id"],
@@ -1078,7 +1174,6 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # STATS
 # ==========================================
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if update.effective_user.id != ADMIN_ID:
         return
 
@@ -1112,7 +1207,6 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).to_list(length=1)
 
     top_server = "N/A"
-
     if top_server_data:
         top_server = top_server_data[0]["_id"]
 
@@ -1144,7 +1238,6 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # QUEUE VIEW
 # ==========================================
 async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if update.effective_user.id != ADMIN_ID:
         return
 
@@ -1153,7 +1246,6 @@ async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }).to_list(length=20)
 
     if not files:
-
         await update.message.reply_text(
             "📦 Queue empty."
         )
@@ -1162,7 +1254,6 @@ async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = "📦 <b>QUEUE FILES</b>\n\n"
 
     for i, f in enumerate(files, start=1):
-
         txt += (
             f"{i}. <code>{f['name']}</code>\n"
             f"🌍 {f.get('server')}\n"
@@ -1179,7 +1270,6 @@ async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # CLEAR QUEUE
 # ==========================================
 async def clear_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     if update.effective_user.id != ADMIN_ID:
         return
 
@@ -1200,7 +1290,6 @@ async def clear_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # HELP / PING
 # ==========================================
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     txt = (
         "💡 <b>VIP BOT COMMANDS</b>\n\n"
         "/stats - Dashboard\n"
@@ -1217,7 +1306,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     start = time.perf_counter()
 
     msg = await update.message.reply_text(
@@ -1235,7 +1323,6 @@ async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ADMIN CALLBACKS
 # ==========================================
 async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     query = update.callback_query
     await query.answer()
 
@@ -1245,7 +1332,6 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "admin_stats":
-
         stats = await stats_col.find_one({
             "_id": "global_stats"
         }) or {}
@@ -1259,7 +1345,6 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "admin_queue":
-
         q = await files_col.count_documents({
             "status": "queued"
         })
@@ -1269,7 +1354,6 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "admin_clear_queue":
-
         result = await files_col.delete_many({
             "status": "queued"
         })
@@ -1279,11 +1363,9 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "admin_post_now":
-
         await query.edit_message_text(
             "🚀 Posting started..."
         )
-
         await execute_posting(
             context,
             ADMIN_ID
@@ -1294,7 +1376,6 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # BOT INIT
 # ==========================================
 async def bot_init(application: Application):
-
     me = await application.bot.get_me()
 
     sys_memory["bot_username"] = me.username
@@ -1308,13 +1389,11 @@ async def bot_init(application: Application):
         BotCommand("help", "Help"),
     ])
 
-    # EXPIRY CHECK
     application.job_queue.run_repeating(
         expiry_monitor,
         interval=600,
     )
 
-    # CLEANUP
     application.job_queue.run_repeating(
         auto_cleanup,
         interval=86400,
@@ -1325,7 +1404,6 @@ async def bot_init(application: Application):
 # MAIN
 # ==========================================
 if __name__ == "__main__":
-
     app = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
@@ -1335,7 +1413,6 @@ if __name__ == "__main__":
 
     app.add_error_handler(error_handler)
 
-    # COMMANDS
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("broadcast", broadcast_message))
     app.add_handler(CommandHandler("stats", show_stats))
@@ -1344,7 +1421,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("queue", show_queue))
     app.add_handler(CommandHandler("clear", clear_queue))
 
-    # ADMIN CALLBACKS
     app.add_handler(
         CallbackQueryHandler(
             admin_callbacks,
@@ -1352,7 +1428,6 @@ if __name__ == "__main__":
         )
     )
 
-    # CONVERSATION
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(
@@ -1361,7 +1436,6 @@ if __name__ == "__main__":
             )
         ],
         states={
-
             ASK_SERVER: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND,
