@@ -1,29 +1,30 @@
-# ==========================================
-# VIP ENTERPRISE BOT — PART 1
-# MODERN PANEL UI EDITION
-# ==========================================
+# =========================================================
+# VIP ENTERPRISE VPN BOT — PART 1
+# ULTRA PREMIUM EDITION
+# FIXED + UPGRADED
+# =========================================================
 
 import os
 import io
 import re
 import html
 import uuid
-import asyncio
+import time
 import random
+import asyncio
 import logging
 import traceback
-import time
 
 from datetime import datetime, timedelta
 
 from openai import AsyncOpenAI
+
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputFile,
     BotCommand,
 )
 
@@ -34,8 +35,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
     ContextTypes,
-    filters,
     Application,
+    filters,
 )
 
 from PIL import (
@@ -45,66 +46,90 @@ from PIL import (
     ImageFilter,
 )
 
-# ==========================================
+# =========================================================
 # CONFIG
-# ==========================================
+# =========================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+
+ADMIN_ID = int(
+    os.getenv("ADMIN_ID", "0")
+)
+
+OPENAI_API_KEY = os.getenv(
+    "OPENAI_API_KEY"
+)
 
 FORCE_CHANNELS = [
     i.strip()
-    for i in os.getenv("FORCE_CHANNELS", "").split(",")
+    for i in os.getenv(
+        "FORCE_CHANNELS",
+        ""
+    ).split(",")
     if i.strip()
 ]
 
 try:
+
     CHANNEL_IDS = [
         int(i.strip())
-        for i in os.getenv("CHANNEL_IDS", "").split(",")
+        for i in os.getenv(
+            "CHANNEL_IDS",
+            ""
+        ).split(",")
         if i.strip()
     ]
+
 except:
+
     CHANNEL_IDS = []
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
+# =========================================================
+# OPENAI
+# =========================================================
 client = AsyncOpenAI(
     api_key=OPENAI_API_KEY
 )
 
-# ==========================================
-# DATABASE
-# ==========================================
-MONGO_URI = os.getenv("MONGO_URI")
+# =========================================================
+# MONGODB
+# =========================================================
+MONGO_URI = os.getenv(
+    "MONGO_URI"
+)
 
-db_client = AsyncIOMotorClient(MONGO_URI)
+mongo_client = AsyncIOMotorClient(
+    MONGO_URI
+)
 
-db = db_client["vip_vpn_bot"]
+db = mongo_client["vip_enterprise"]
 
 files_col = db["files"]
+
 users_col = db["users"]
+
 stats_col = db["stats"]
+
 analytics_col = db["analytics"]
 
-# ==========================================
+# =========================================================
 # MEMORY
-# ==========================================
+# =========================================================
 sys_memory = {
     "bot_username": "",
-    "start_time": datetime.now()
+    "start_time": datetime.now(),
 }
 
-# ==========================================
+# =========================================================
 # LOGGING
-# ==========================================
+# =========================================================
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-# ==========================================
+# =========================================================
 # STATES
-# ==========================================
+# =========================================================
 (
     ASK_SERVER,
     ASK_HOST,
@@ -113,9 +138,9 @@ logging.basicConfig(
     CONFIRM_ACTION,
 ) = range(5)
 
-# ==========================================
+# =========================================================
 # ERROR HANDLER
-# ==========================================
+# =========================================================
 async def error_handler(update, context):
 
     tb = "".join(
@@ -132,121 +157,19 @@ async def error_handler(update, context):
 
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"❌ ERROR\n<pre>{html.escape(tb[:3500])}</pre>",
-            parse_mode="HTML",
+            text=(
+                "❌ <b>BOT ERROR</b>\n\n"
+                f"<pre>{html.escape(tb[:3500])}</pre>"
+            ),
+            parse_mode="HTML"
         )
 
     except:
         pass
 
-
-# ==========================================
-# HELPERS
-# ==========================================
-def clean_file_name(name):
-
-    ext = name.split(".")[-1]
-
-    base = re.sub(
-        r"[^a-zA-Z0-9 ]",
-        " ",
-        name.rsplit(".", 1)[0]
-    )
-
-    base = " ".join(base.split())
-
-    return f"{base} Premium.{ext}"
-
-
-def detect_category(filename):
-
-    n = filename.lower()
-
-    mapping = {
-        "Facebook": ["fb", "facebook"],
-        "YouTube": ["yt", "youtube"],
-        "Telegram": ["tg", "telegram"],
-        "WhatsApp": ["wa", "whatsapp"],
-        "TikTok": ["tt", "tiktok"],
-        "Gaming": ["pubg", "ff", "gaming"],
-        "Streaming": ["netflix", "stream"],
-    }
-
-    for label, keys in mapping.items():
-
-        if any(k in n for k in keys):
-            return label
-
-    return "All Sites"
-
-
-def parse_expiry(text):
-
-    if not text:
-        return None
-
-    nums = re.findall(r"\d+", text)
-
-    if not nums:
-        return None
-
-    value = int(nums[0])
-
-    if "day" in text.lower():
-        return datetime.now() + timedelta(days=value)
-
-    return None
-
-
-async def get_best_ping(host):
-
-    host = (
-        host
-        .replace("https://", "")
-        .replace("http://", "")
-        .split("/")[0]
-    )
-
-    best_ping = float("inf")
-
-    for port in [443, 80]:
-
-        for _ in range(2):
-
-            try:
-
-                start = time.perf_counter()
-
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection(host, port),
-                    timeout=1.5
-                )
-
-                ping = (
-                    time.perf_counter() - start
-                ) * 1000
-
-                writer.close()
-
-                await writer.wait_closed()
-
-                best_ping = min(
-                    best_ping,
-                    ping
-                )
-
-            except:
-                continue
-
-    if best_ping != float("inf"):
-        return round(best_ping)
-
-    return random.randint(40, 90)
-
-
-# ==========================================
-# FORCE JOIN
-# ==========================================
+# =========================================================
+# FORCE JOIN CHECK
+# =========================================================
 async def is_subscribed(bot, user_id):
 
     for channel in FORCE_CHANNELS:
@@ -270,10 +193,139 @@ async def is_subscribed(bot, user_id):
 
     return True
 
+# =========================================================
+# FILE CLEANER
+# =========================================================
+def clean_file_name(name):
 
-# ==========================================
-# PREMIUM MENU UI
-# ==========================================
+    ext = name.split(".")[-1]
+
+    base = re.sub(
+        r"[^a-zA-Z0-9 ]",
+        " ",
+        name.rsplit(".", 1)[0]
+    )
+
+    base = " ".join(base.split())
+
+    return f"{base} Premium.{ext}"
+
+# =========================================================
+# CATEGORY DETECTOR
+# =========================================================
+def detect_category(filename):
+
+    n = filename.lower()
+
+    mapping = {
+
+        "Facebook": [
+            "fb",
+            "facebook",
+        ],
+
+        "YouTube": [
+            "yt",
+            "youtube",
+        ],
+
+        "Telegram": [
+            "tg",
+            "telegram",
+        ],
+
+        "WhatsApp": [
+            "wa",
+            "whatsapp",
+        ],
+
+        "TikTok": [
+            "tt",
+            "tiktok",
+        ],
+
+        "Gaming": [
+            "pubg",
+            "freefire",
+            "ff",
+        ],
+
+        "Streaming": [
+            "netflix",
+            "stream",
+        ],
+    }
+
+    for label, keys in mapping.items():
+
+        if any(k in n for k in keys):
+            return label
+
+    return "All Sites"
+
+# =========================================================
+# EXPIRY PARSER
+# =========================================================
+def parse_expiry(days):
+
+    if not days:
+        return None
+
+    return datetime.now() + timedelta(
+        days=int(days)
+    )
+
+# =========================================================
+# PING SYSTEM
+# =========================================================
+async def get_best_ping(host):
+
+    host = (
+        host
+        .replace("https://", "")
+        .replace("http://", "")
+        .split("/")[0]
+    )
+
+    best = float("inf")
+
+    for port in [443, 80]:
+
+        for _ in range(2):
+
+            try:
+
+                start = time.perf_counter()
+
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(
+                        host,
+                        port
+                    ),
+                    timeout=1.5
+                )
+
+                ping = (
+                    time.perf_counter() - start
+                ) * 1000
+
+                writer.close()
+
+                await writer.wait_closed()
+
+                best = min(best, ping)
+
+            except:
+                continue
+
+    if best != float("inf"):
+        return round(best)
+
+    return random.randint(40, 90)
+
+# =========================================================
+# PREMIUM PANEL MENU
+# =========================================================
 def home_menu():
 
     return InlineKeyboardMarkup([
@@ -287,7 +339,7 @@ def home_menu():
             InlineKeyboardButton(
                 "➖ লিংক মুছুন",
                 callback_data="delete_link"
-            )
+            ),
         ],
 
         [
@@ -299,7 +351,7 @@ def home_menu():
             InlineKeyboardButton(
                 "👥 মোট ইউজার",
                 callback_data="total_users"
-            )
+            ),
         ],
 
         [
@@ -311,7 +363,19 @@ def home_menu():
             InlineKeyboardButton(
                 "📊 অ্যানালিটিক্স",
                 callback_data="analytics"
-            )
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "📦 কিউ",
+                callback_data="queue"
+            ),
+
+            InlineKeyboardButton(
+                "🚀 পোস্ট করুন",
+                callback_data="post_now"
+            ),
         ],
 
         [
@@ -319,14 +383,132 @@ def home_menu():
                 "🔄 ফোর্স চেক",
                 callback_data="force_check"
             )
-        ]
+        ],
     ])
 
+# =========================================================
+# SERVER MENU
+# =========================================================
+def server_menu():
 
-# ==========================================
-# PREMIUM THUMBNAIL SYSTEM
-# ==========================================
-def neon_thumbnail(file_info):
+    return InlineKeyboardMarkup([
+
+        [
+            InlineKeyboardButton(
+                "🇸🇬 Singapore",
+                callback_data="srv_Singapore"
+            ),
+
+            InlineKeyboardButton(
+                "🇺🇸 USA",
+                callback_data="srv_USA"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🇮🇳 India",
+                callback_data="srv_India"
+            ),
+
+            InlineKeyboardButton(
+                "🇧🇩 Bangladesh",
+                callback_data="srv_Bangladesh"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🇬🇧 UK",
+                callback_data="srv_UK"
+            ),
+
+            InlineKeyboardButton(
+                "🇩🇪 Germany",
+                callback_data="srv_Germany"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🇨🇦 Canada",
+                callback_data="srv_Canada"
+            ),
+
+            InlineKeyboardButton(
+                "🇫🇷 France",
+                callback_data="srv_France"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🇳🇱 Netherlands",
+                callback_data="srv_Netherlands"
+            ),
+
+            InlineKeyboardButton(
+                "🇯🇵 Japan",
+                callback_data="srv_Japan"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🌍 Auto Server",
+                callback_data="srv_Auto"
+            ),
+        ],
+    ])
+
+# =========================================================
+# EXPIRY MENU
+# =========================================================
+def expiry_menu():
+
+    return InlineKeyboardMarkup([
+
+        [
+            InlineKeyboardButton(
+                "1 Day",
+                callback_data="exp_1"
+            ),
+
+            InlineKeyboardButton(
+                "2 Days",
+                callback_data="exp_2"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "3 Days",
+                callback_data="exp_3"
+            ),
+
+            InlineKeyboardButton(
+                "5 Days",
+                callback_data="exp_5"
+            ),
+        ],
+
+        [
+            InlineKeyboardButton(
+                "7 Days",
+                callback_data="exp_7"
+            ),
+
+            InlineKeyboardButton(
+                "Unlimited",
+                callback_data="exp_skip"
+            ),
+        ],
+    ])
+
+# =========================================================
+# NEON THUMBNAIL SYSTEM
+# =========================================================
+def generate_neon_thumbnail(file_info):
 
     width = 1280
     height = 720
@@ -334,12 +516,12 @@ def neon_thumbnail(file_info):
     img = Image.new(
         "RGB",
         (width, height),
-        (10, 12, 28)
+        (8, 10, 30)
     )
 
     draw = ImageDraw.Draw(img)
 
-    # GLOW
+    # GLOW LAYER
     glow = Image.new(
         "RGBA",
         (width, height),
@@ -352,7 +534,7 @@ def neon_thumbnail(file_info):
     gdraw.rounded_rectangle(
         (50, 50, 1230, 670),
         radius=40,
-        fill=(20, 20, 40, 255),
+        fill=(18, 18, 40, 255),
         outline=(0, 255, 255, 255),
         width=6
     )
@@ -361,13 +543,17 @@ def neon_thumbnail(file_info):
         ImageFilter.GaussianBlur(18)
     )
 
-    img.paste(glow, (0, 0), glow)
+    img.paste(
+        glow,
+        (0, 0),
+        glow
+    )
 
-    # BOX AGAIN
+    # MAIN PANEL
     draw.rounded_rectangle(
         (50, 50, 1230, 670),
         radius=40,
-        fill=(18, 18, 35),
+        fill=(16, 18, 38),
         outline=(0, 255, 255),
         width=4
     )
@@ -375,7 +561,7 @@ def neon_thumbnail(file_info):
     # FONTS
     title_font = ImageFont.truetype(
         "DejaVuSans-Bold.ttf",
-        52
+        54
     )
 
     normal_font = ImageFont.truetype(
@@ -389,28 +575,31 @@ def neon_thumbnail(file_info):
     )
 
     # DATA
-    server = file_info.get("server") or "Auto Premium"
-
-    category = (
-        file_info.get("category")
-        or "All Sites"
+    server = file_info.get(
+        "server",
+        "Auto"
     )
 
-    expiry = (
-        file_info.get("expiry_raw")
-        or "Unlimited"
+    category = file_info.get(
+        "category",
+        "All Sites"
     )
 
-    ping = (
-        file_info.get("ping")
-        or "Protected"
+    expiry = file_info.get(
+        "expiry_raw",
+        "Unlimited"
+    )
+
+    ping = file_info.get(
+        "ping",
+        "Protected"
     )
 
     # TITLE GLOW
-    for offset in range(8):
+    for i in range(8):
 
         draw.text(
-            (82-offset, 82-offset),
+            (82-i, 82-i),
             "VIP VPN CONFIG",
             font=title_font,
             fill=(0, 255, 255)
@@ -423,21 +612,25 @@ def neon_thumbnail(file_info):
         fill=(255, 255, 255)
     )
 
-    # INFO BOXES
+    # INFO CARDS
     y = 210
 
     items = [
+
         f"🌍 Server : {server}",
+
         f"🏷 Category : {category}",
+
         f"⏳ Expiry : {expiry}",
+
         f"⚡ Ping : {ping} ms",
     ]
 
     for item in items:
 
         draw.rounded_rectangle(
-            (80, y-15, 850, y+55),
-            radius=20,
+            (80, y-15, 860, y+55),
+            radius=18,
             fill=(25, 30, 50),
             outline=(0, 255, 255),
             width=2
@@ -454,7 +647,7 @@ def neon_thumbnail(file_info):
 
     # FOOTER
     draw.text(
-        (85, 620),
+        (80, 620),
         "Premium Delivery • Safe Link • Fast Access",
         font=small_font,
         fill=(170, 170, 170)
@@ -471,26 +664,38 @@ def neon_thumbnail(file_info):
 
     buf.seek(0)
 
-    buf.name = "vip_thumb.jpg"
+    buf.name = "vip.jpg"
 
     return buf
 
+# =========================================================
+# START FUNCTION
+# =========================================================
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-# ==========================================
-# START MENU
-# ==========================================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # SAFE LINK SYSTEM
+    if context.args:
+        return await handle_safe_link(
+            update,
+            context
+        )
 
     user_id = update.effective_user.id
 
     await users_col.update_one(
+
         {"_id": user_id},
+
         {
             "$set": {
                 "_id": user_id,
-                "last_seen": datetime.now(),
+                "last_seen": datetime.now()
             }
         },
+
         upsert=True
     )
 
@@ -498,129 +703,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id != ADMIN_ID:
 
         await update.message.reply_text(
-            "👋 Welcome To VIP VPN BOT",
-            parse_mode="HTML",
+            (
+                "👋 Welcome To VIP VPN BOT\n\n"
+                "⚡ Premium VPN Delivery System"
+            ),
+            parse_mode="HTML"
         )
 
         return
 
     # ADMIN PANEL
     await update.message.reply_photo(
+
         photo="https://i.ibb.co/4YBNyvP/panel.jpg",
+
         caption=(
             "🔥 <b>VIP ENTERPRISE PANEL</b>\n\n"
-            "⚡ Advanced Control System Ready"
+            "⚡ Advanced Premium Control System"
         ),
+
         parse_mode="HTML",
+
         reply_markup=home_menu()
     )
 
-
-# ==========================================
-# SERVER MENU
-# ==========================================
-def server_keyboard():
-
-    return InlineKeyboardMarkup([
-
-        [
-            InlineKeyboardButton(
-                "🇸🇬 Singapore",
-                callback_data="srv_Singapore"
-            ),
-
-            InlineKeyboardButton(
-                "🇺🇸 USA",
-                callback_data="srv_USA"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🇮🇳 India",
-                callback_data="srv_India"
-            ),
-
-            InlineKeyboardButton(
-                "🇧🇩 Bangladesh",
-                callback_data="srv_Bangladesh"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🇬🇧 UK",
-                callback_data="srv_UK"
-            ),
-
-            InlineKeyboardButton(
-                "🇩🇪 Germany",
-                callback_data="srv_Germany"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🌍 Auto",
-                callback_data="srv_Auto"
-            )
-        ]
-    ])
-
-
-# ==========================================
-# EXPIRY MENU
-# ==========================================
-def expiry_keyboard():
-
-    return InlineKeyboardMarkup([
-
-        [
-            InlineKeyboardButton(
-                "1 Day",
-                callback_data="exp_1"
-            ),
-
-            InlineKeyboardButton(
-                "2 Days",
-                callback_data="exp_2"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "3 Days",
-                callback_data="exp_3"
-            ),
-
-            InlineKeyboardButton(
-                "5 Days",
-                callback_data="exp_5"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "7 Days",
-                callback_data="exp_7"
-            ),
-
-            InlineKeyboardButton(
-                "Unlimited",
-                callback_data="exp_skip"
-            )
-        ]
-    ])
-
-# ==========================================
-# VIP ENTERPRISE BOT — PART 2
-# UPLOAD / POST / ANALYTICS / MAIN
-# ==========================================
-
-
-# ==========================================
+# =========================================================
 # UPLOAD START
-# ==========================================
+# =========================================================
 async def start_upload(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -670,15 +779,18 @@ async def start_upload(
 
         parse_mode="HTML",
 
-        reply_markup=server_keyboard()
+        reply_markup=server_menu()
     )
 
     return ASK_SERVER
+    # =========================================================
+# VIP ENTERPRISE VPN BOT — PART 2
+# POSTING + DELIVERY + ANALYTICS + MAIN
+# =========================================================
 
-
-# ==========================================
+# =========================================================
 # SERVER PROCESS
-# ==========================================
+# =========================================================
 async def process_server(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -705,10 +817,9 @@ async def process_server(
 
     return ASK_HOST
 
-
-# ==========================================
+# =========================================================
 # HOST PROCESS
-# ==========================================
+# =========================================================
 async def process_host(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -731,19 +842,18 @@ async def process_host(
     await update.message.reply_text(
 
         f"⚡ Ping : <b>{ping} ms</b>\n\n"
-        "⏳ Expiry নির্বাচন করুন",
+        "⏳ মেয়াদ নির্বাচন করুন",
 
         parse_mode="HTML",
 
-        reply_markup=expiry_keyboard()
+        reply_markup=expiry_menu()
     )
 
     return ASK_EXPIRY
 
-
-# ==========================================
+# =========================================================
 # EXPIRY PROCESS
-# ==========================================
+# =========================================================
 async def process_expiry(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -753,12 +863,12 @@ async def process_expiry(
 
     await query.answer()
 
-    val = query.data.replace(
+    value = query.data.replace(
         "exp_",
         ""
     )
 
-    if val == "skip":
+    if value == "skip":
 
         context.user_data["temp"]["expiry_raw"] = "Unlimited"
 
@@ -766,11 +876,10 @@ async def process_expiry(
 
     else:
 
-        context.user_data["temp"]["expiry_raw"] = f"{val} Days"
+        context.user_data["temp"]["expiry_raw"] = f"{value} Days"
 
-        context.user_data["temp"]["expiry_date"] = (
-            datetime.now() +
-            timedelta(days=int(val))
+        context.user_data["temp"]["expiry_date"] = parse_expiry(
+            value
         )
 
     await query.edit_message_text(
@@ -781,27 +890,26 @@ async def process_expiry(
 
     return ASK_CUSTOM
 
-
-# ==========================================
-# CUSTOM MSG
-# ==========================================
+# =========================================================
+# CUSTOM MESSAGE
+# =========================================================
 async def process_custom(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    text = update.message.text
+    txt = update.message.text.strip()
 
-    if text.lower() == "skip":
-        text = None
+    if txt.lower() == "skip":
+        txt = None
 
-    context.user_data["temp"]["custom_msg"] = text
+    context.user_data["temp"]["custom_msg"] = txt
 
     f = context.user_data["temp"]
 
     await files_col.insert_one(f)
 
-    thumb = neon_thumbnail(f)
+    thumb = generate_neon_thumbnail(f)
 
     await update.message.reply_photo(
 
@@ -810,8 +918,8 @@ async def process_custom(
         caption=(
             "✅ <b>FILE READY FOR POST</b>\n\n"
             f"🌍 Server : <b>{f['server']}</b>\n"
-            f"⚡ Ping : <b>{f['ping']} ms</b>\n"
             f"🏷 Category : <b>{f['category']}</b>\n"
+            f"⚡ Ping : <b>{f['ping']} ms</b>\n"
             f"⏳ Expiry : <b>{f['expiry_raw']}</b>"
         ),
 
@@ -837,10 +945,87 @@ async def process_custom(
 
     return CONFIRM_ACTION
 
+# =========================================================
+# AI CAPTION
+# =========================================================
+async def generate_ai_caption(file_info):
 
-# ==========================================
-# POST ACTION
-# ==========================================
+    server = file_info.get(
+        "server",
+        "Auto"
+    )
+
+    category = file_info.get(
+        "category",
+        "All Sites"
+    )
+
+    expiry = file_info.get(
+        "expiry_raw",
+        "Unlimited"
+    )
+
+    ping = file_info.get(
+        "ping",
+        "Protected"
+    )
+
+    note = file_info.get(
+        "custom_msg"
+    )
+
+    prompt = (
+        "Write a premium Bengali VPN promotion caption. "
+        "Keep it attractive and short."
+    )
+
+    if note:
+        prompt += f" Add this note creatively: {note}"
+
+    try:
+
+        res = await client.chat.completions.create(
+
+            model="gpt-4o-mini",
+
+            messages=[
+
+                {
+                    "role": "system",
+                    "content": (
+                        "Write in Bengali with emojis."
+                    )
+                },
+
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+
+            temperature=0.8
+        )
+
+        intro = res.choices[0].message.content
+
+    except:
+
+        intro = (
+            "🔥 নতুন প্রিমিয়াম VPN CONFIG\n"
+            "⚡ Fast • Secure • Smooth"
+        )
+
+    return (
+        f"{intro}\n\n"
+        f"🌍 <b>Server :</b> {server}\n"
+        f"🏷 <b>Category :</b> {category}\n"
+        f"⚡ <b>Ping :</b> {ping} ms\n"
+        f"⏳ <b>Expiry :</b> {expiry}"
+    )
+
+# =========================================================
+# POST SYSTEM
+# =========================================================
 async def confirm_post(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -850,6 +1035,7 @@ async def confirm_post(
 
     await query.answer()
 
+    # CANCEL
     if query.data == "cancel_post":
 
         await query.edit_message_caption(
@@ -862,66 +1048,76 @@ async def confirm_post(
         "status": "queued"
     }).to_list(length=None)
 
-    total = 0
+    if not files:
+
+        await query.edit_message_caption(
+            caption="❌ Queue Empty"
+        )
+
+        return ConversationHandler.END
+
+    total_posts = 0
 
     for f in files:
 
         try:
 
-            url = (
+            ai_caption = await generate_ai_caption(f)
+
+            safe_url = (
                 f"https://t.me/"
                 f"{sys_memory['bot_username']}"
                 f"?start=get_{f['uid']}"
             )
 
-            caption = (
-                f"🔥 <b>VIP VPN CONFIG</b>\n\n"
-                f"🌍 Server : <b>{f['server']}</b>\n"
-                f"🏷 Category : <b>{f['category']}</b>\n"
-                f"⚡ Ping : <b>{f['ping']} ms</b>\n"
-                f"⏳ Expiry : <b>{f['expiry_raw']}</b>\n\n"
-                f"🔗 <a href='{url}'>📥 DOWNLOAD FILE</a>"
+            final_caption = (
+                f"{ai_caption}\n\n"
+                f"🔗 <a href='{safe_url}'>"
+                f"📥 DOWNLOAD FILE"
+                f"</a>"
             )
 
-            thumb = neon_thumbnail(f)
+            thumb = generate_neon_thumbnail(f)
 
             posted_records = []
 
-            tasks = []
-
             for channel_id in CHANNEL_IDS:
 
-                tasks.append(
+                try:
 
-                    context.bot.send_photo(
+                    msg = await context.bot.send_photo(
 
                         chat_id=channel_id,
 
                         photo=thumb,
 
-                        caption=caption,
+                        caption=final_caption,
 
                         parse_mode="HTML"
                     )
-                )
 
-            results = await asyncio.gather(
-                *tasks,
-                return_exceptions=True
-            )
+                    posted_records.append([
 
-            for idx, r in enumerate(results):
+                        channel_id,
 
-                if isinstance(r, Exception):
-                    continue
+                        msg.message_id
+                    ])
 
-                posted_records.append([
+                    total_posts += 1
 
-                    CHANNEL_IDS[idx],
+                except Exception as e:
 
-                    r.message_id
-                ])
+                    await context.bot.send_message(
 
+                        ADMIN_ID,
+
+                        f"❌ Channel Error\n"
+                        f"<pre>{html.escape(str(e))}</pre>",
+
+                        parse_mode="HTML"
+                    )
+
+            # UPDATE STATUS
             await files_col.update_one(
 
                 {"uid": f["uid"]},
@@ -932,11 +1128,11 @@ async def confirm_post(
                         "status": "posted",
 
                         "posted_msgs": posted_records,
+
+                        "posted_at": datetime.now(),
                     }
                 }
             )
-
-            total += len(posted_records)
 
         except Exception as e:
 
@@ -944,16 +1140,31 @@ async def confirm_post(
 
                 ADMIN_ID,
 
-                f"❌ POST ERROR\n<pre>{html.escape(str(e))}</pre>",
+                f"❌ POST ERROR\n"
+                f"<pre>{html.escape(str(e))}</pre>",
 
                 parse_mode="HTML"
             )
+
+    # GLOBAL STATS
+    await stats_col.update_one(
+
+        {"_id": "global_stats"},
+
+        {
+            "$inc": {
+                "total_posts": total_posts
+            }
+        },
+
+        upsert=True
+    )
 
     await query.edit_message_caption(
 
         caption=(
             f"🚀 <b>POST COMPLETE</b>\n\n"
-            f"✅ Total Posts : <b>{total}</b>"
+            f"✅ Total Posts : <b>{total_posts}</b>"
         ),
 
         parse_mode="HTML"
@@ -961,48 +1172,32 @@ async def confirm_post(
 
     return ConversationHandler.END
 
-
-# ==========================================
-# SAFE DOWNLOAD
-# ==========================================
-async def handle_start(
+# =========================================================
+# SAFE LINK DELIVERY
+# =========================================================
+async def handle_safe_link(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
     args = context.args
 
-    user_id = update.effective_user.id
-
-    await users_col.update_one(
-
-        {"_id": user_id},
-
-        {
-            "$set": {
-                "_id": user_id
-            }
-        },
-
-        upsert=True
-    )
-
     if not args:
         return
 
-    if not args[0].startswith("get_"):
-        return
+    user_id = update.effective_user.id
 
     uid = args[0].replace(
         "get_",
         ""
     )
 
-    f = await files_col.find_one({
+    file_data = await files_col.find_one({
         "uid": uid
     })
 
-    if not f:
+    # NOT FOUND
+    if not file_data:
 
         await update.message.reply_text(
 
@@ -1013,6 +1208,7 @@ async def handle_start(
 
         return
 
+    # FORCE JOIN
     if not await is_subscribed(
         context.bot,
         user_id
@@ -1036,26 +1232,53 @@ async def handle_start(
 
             "❌ আগে Channel Join করুন",
 
-            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="HTML",
+
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+
+        return
+
+    # EXPIRED
+    exp = file_data.get(
+        "expiry_date"
+    )
+
+    if exp and datetime.now() > exp:
+
+        await update.message.reply_text(
+
+            "⚠️ এই Config এর মেয়াদ শেষ হয়েছে",
 
             parse_mode="HTML"
         )
+
+        # DELETE FROM DB
+        await files_col.delete_one({
+            "uid": uid
+        })
 
         return
 
     try:
 
-        telegram_file = await context.bot.get_file(
-            f["id"]
+        msg = await update.message.reply_text(
+
+            "📥 File Preparing...",
+            parse_mode="HTML"
+        )
+
+        tg_file = await context.bot.get_file(
+            file_data["id"]
         )
 
         stream = io.BytesIO(
 
-            await telegram_file.download_as_bytearray()
+            await tg_file.download_as_bytearray()
         )
 
         stream.name = clean_file_name(
-            f["name"]
+            file_data["name"]
         )
 
         await update.message.reply_document(
@@ -1063,7 +1286,7 @@ async def handle_start(
             document=stream,
 
             caption=(
-                "✅ <b>FILE READY</b>\n\n"
+                "✅ <b>VIP CONFIG READY</b>\n\n"
                 "⚡ Premium VPN Delivered"
             ),
 
@@ -1081,16 +1304,17 @@ async def handle_start(
             }
         )
 
+        await msg.delete()
+
     except Exception as e:
 
         await update.message.reply_text(
             f"❌ {e}"
         )
 
-
-# ==========================================
+# =========================================================
 # PANEL CALLBACKS
-# ==========================================
+# =========================================================
 async def panel_callbacks(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -1102,7 +1326,7 @@ async def panel_callbacks(
 
     data = query.data
 
-    # USERS
+    # TOTAL USERS
     if data == "total_users":
 
         users = await users_col.count_documents({})
@@ -1117,7 +1341,9 @@ async def panel_callbacks(
     # ANALYTICS
     elif data == "analytics":
 
-        total_posts = await files_col.count_documents({
+        total_files = await files_col.count_documents({})
+
+        posted = await files_col.count_documents({
             "status": "posted"
         })
 
@@ -1131,8 +1357,9 @@ async def panel_callbacks(
             )
 
         txt = (
-            f"📊 <b>BOT ANALYTICS</b>\n\n"
-            f"📦 Total Posts : <b>{total_posts}</b>\n"
+            "📊 <b>BOT ANALYTICS</b>\n\n"
+            f"📦 Total Files : <b>{total_files}</b>\n"
+            f"🚀 Posted : <b>{posted}</b>\n"
             f"📥 Downloads : <b>{total_downloads}</b>"
         )
 
@@ -1151,12 +1378,12 @@ async def panel_callbacks(
         if not files:
 
             await query.message.reply_text(
-                "❌ No links found"
+                "❌ No Posted Files"
             )
 
             return
 
-        txt = "📜 <b>ALL LINKS</b>\n\n"
+        txt = "📜 <b>ALL POSTED CONFIGS</b>\n\n"
 
         for f in files:
 
@@ -1170,17 +1397,33 @@ async def panel_callbacks(
             parse_mode="HTML"
         )
 
+    # QUEUE
+    elif data == "queue":
+
+        queued = await files_col.count_documents({
+            "status": "queued"
+        })
+
+        await query.message.reply_text(
+
+            f"📦 Queue Files : <b>{queued}</b>",
+
+            parse_mode="HTML"
+        )
+
     # FORCE CHECK
     elif data == "force_check":
 
         await query.message.reply_text(
-            "✅ Force Join System Active"
+
+            "✅ Force Join System Active",
+
+            parse_mode="HTML"
         )
 
-
-# ==========================================
+# =========================================================
 # BROADCAST
-# ==========================================
+# =========================================================
 async def broadcast(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -1194,7 +1437,7 @@ async def broadcast(
     if not text:
 
         await update.message.reply_text(
-            "/broadcast your message"
+            "/broadcast your_message"
         )
 
         return
@@ -1227,10 +1470,9 @@ async def broadcast(
         f"📨 Sent : {success}"
     )
 
-
-# ==========================================
+# =========================================================
 # BOT INIT
-# ==========================================
+# =========================================================
 async def bot_init(
     application: Application
 ):
@@ -1252,10 +1494,9 @@ async def bot_init(
         ),
     ])
 
-
-# ==========================================
+# =========================================================
 # MAIN
-# ==========================================
+# =========================================================
 if __name__ == "__main__":
 
     app = (
@@ -1265,18 +1506,20 @@ if __name__ == "__main__":
         .build()
     )
 
+    # ERROR HANDLER
     app.add_error_handler(
         error_handler
     )
 
-    # COMMANDS
+    # START
     app.add_handler(
         CommandHandler(
             "start",
-            handle_start
+            start
         )
     )
 
+    # BROADCAST
     app.add_handler(
         CommandHandler(
             "broadcast",
@@ -1284,11 +1527,20 @@ if __name__ == "__main__":
         )
     )
 
-    # PANEL
+    # PANEL CALLBACKS
     app.add_handler(
+
         CallbackQueryHandler(
+
             panel_callbacks,
-            pattern="^(all_links|total_users|analytics|force_check)$"
+
+            pattern=(
+                "^(all_links|"
+                "total_users|"
+                "analytics|"
+                "queue|"
+                "force_check)$"
+            )
         )
     )
 
@@ -1353,16 +1605,8 @@ if __name__ == "__main__":
 
     app.add_handler(conv)
 
-    # ADMIN PANEL
-    app.add_handler(
-        CommandHandler(
-            "panel",
-            start
-        )
-    )
-
     print(
-        "🚀 VIP ENTERPRISE PANEL BOT RUNNING..."
+        "🚀 VIP ENTERPRISE VPN BOT RUNNING..."
     )
 
     app.run_polling()
