@@ -1,7 +1,7 @@
 # ==========================================
-# VIP ENTERPRISE VPN BOT
+# VIP ENTERPRISE VPN BOT (UPGRADED V3)
 # PART 1 / 2
-# CORE CONFIG + DB + HELPERS + UPLOAD FLOW + START DOWNLOAD
+# CORE CONFIG + DB + HELPERS + UPLOAD FLOW + START DOWNLOAD + AUTO-DELETE
 # ==========================================
 
 import os
@@ -47,6 +47,8 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 MONGO_URI = os.getenv("MONGO_URI")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+YOUTUBE_CHANNEL = "https://youtube.com/@itsmeratulfti?si=ooW1RtWnpz6t_LJH"
+
 FORCE_CHANNELS = [
     i.strip()
     for i in os.getenv("FORCE_CHANNELS", "").split(",")
@@ -81,13 +83,12 @@ client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 # MONGO DB
 # ==========================================
 db_client = AsyncIOMotorClient(MONGO_URI)
-db = db_client["vip_enterprise_v2"]
+db = db_client["vip_enterprise_v3"]
 
 files_col = db["files"]
 users_col = db["users"]
 stats_col = db["stats"]
 analytics_col = db["analytics"]
-locks_col = db["locks"]
 
 # ==========================================
 # LOGGING
@@ -186,7 +187,6 @@ async def ensure_indexes():
         await files_col.create_index("uid", unique=True)
         await files_col.create_index("status")
         await files_col.create_index("expiry_date")
-        await files_col.create_index("next_repost_date")
         await files_col.create_index("created_at")
         await analytics_col.create_index("created_at")
         await users_col.create_index("_id", unique=True)
@@ -216,16 +216,6 @@ async def is_subscribed(bot, user_id):
         except Exception:
             return False
     return True
-
-def clean_file_name(original_name: str) -> str:
-    if not original_name:
-        return "Premium VPN File"
-    ext = original_name.split(".")[-1] if "." in original_name else "file"
-    base = re.sub(r"[^a-zA-Z0-9 ]", " ", original_name.rsplit(".", 1)[0])
-    base = " ".join(base.split()).strip().title()
-    if not base:
-        base = "Premium VPN"
-    return f"{base}.{ext}"
 
 def detect_category(filename: str) -> str:
     n = (filename or "").lower()
@@ -322,7 +312,7 @@ async def get_best_ping(host):
     return random.randint(60, 90)
 
 # ==========================================
-# APP / VPN DETAILS
+# APP / VPN DETAILS (INSTRUCTIONS & LINKS)
 # ==========================================
 def get_app_details(filename):
     name_lower = (filename or "").lower()
@@ -330,31 +320,40 @@ def get_app_details(filename):
         return (
             "HTTP Custom",
             "https://play.google.com/store/apps/details?id=com.eweny.httpcustom",
-            "১. <b>HTTP Custom</b> অ্যাপে (+) আইকনে ক্লিক করুন।\n২. Open Config থেকে ফাইলটি ইম্পোর্ট করে Connect করুন।",
+            "১. <b>HTTP Custom</b> অ্যাপটি ওপেন করুন।\n"
+            "২. নিচের ডানদিকে <b>(+)</b> আইকনে ক্লিক করুন।\n"
+            "৩. <b>Open Config</b> সিলেক্ট করে ডাউনলোড করা ফাইলটি ইমপোর্ট করুন।\n"
+            "৪. <b>CONNECT</b> বাটনে চাপ দিয়ে কানেক্ট করুন।",
         )
     elif name_lower.endswith(".dark"):
         return (
             "Dark Tunnel",
             "https://play.google.com/store/apps/details?id=com.darktunnel.android",
-            "১. <b>Dark Tunnel</b> অ্যাপের উপরের ⚙️ আইকন থেকে Import করুন।\n২. Start বাটনে ক্লিক করে কানেক্ট করুন।",
+            "১. <b>Dark Tunnel</b> অ্যাপ ওপেন করে উপরের <b>⚙️ (Settings)</b> আইকনে যান।\n"
+            "২. <b>Import Configuration</b> এ চাপ দিয়ে ফাইলটি সিলেক্ট করুন।\n"
+            "৩. হোমস্ক্রিন থেকে <b>START</b> বাটনে চাপুন।",
         )
     elif name_lower.endswith(".nm"):
         return (
             "NetMod Syna",
             "https://play.google.com/store/apps/details?id=com.netmod.syna",
-            "১. <b>NetMod</b> অ্যাপে 📁 আইকনে ক্লিক করে Import করুন।\n২. Start এ ক্লিক করে কানেক্ট করুন।",
+            "১. <b>NetMod</b> অ্যাপে ঢুকে <b>📁 (Folder)</b> আইকনে ক্লিক করুন।\n"
+            "২. <b>Import Config</b> সিলেক্ট করে ফাইলটি লোড করুন।\n"
+            "৩. নিচের <b>START</b> বাটনে ক্লিক করে কানেক্ট করুন।",
         )
     elif name_lower.endswith(".sks"):
         return (
             "SSH Custom",
             "https://play.google.com/store/apps/details?id=com.sshc.custom",
-            "১. <b>SSH Custom</b> অ্যাপে (+) আইকনে ক্লিক করে ফাইলটি ইম্পোর্ট করুন।\n২. Connect এ চাপুন।",
+            "১. <b>SSH Custom</b> অ্যাপে <b>(+)</b> আইকনে চাপ দিন।\n"
+            "২. ফাইলটি ইমপোর্ট করে <b>CONNECT</b> বাটনে চাপুন।",
         )
 
     return (
         "Premium VPN",
         "https://play.google.com/store/search?q=vpn",
-        "১. আপনার ভিপিএন অ্যাপে ফাইলটি ইম্পোর্ট করে কানেক্ট করুন।",
+        "১. আপনার নির্দিষ্ট ভিপিএন অ্যাপ ওপেন করুন।\n"
+        "২. <b>Import Config</b> অপশন থেকে ডাউনলোড করা ফাইলটি সিলেক্ট করে কানেক্ট করুন।",
     )
 
 # ==========================================
@@ -407,11 +406,11 @@ def auto_thumbnail_bytes(file_info):
         width=4,
     )
 
-    title_font = _load_font(56, bold=True)
-    badge_font = _load_font(30, bold=True)
-    label_font = _load_font(32, bold=True)
-    value_font = _load_font(40, bold=True)
-    footer_font = _load_font(24, bold=False)
+    title_font = _load_font(100, bold=True)
+    badge_font = _load_font(100, bold=True)
+    label_font = _load_font(100, bold=True)
+    value_font = _load_font(100, bold=True)
+    footer_font = _load_font(100, bold=False)
 
     server = file_info.get("server") or "Auto Premium"
     expiry = file_info.get("remaining_text") or file_info.get("expiry_raw") or "Unlimited"
@@ -527,16 +526,42 @@ async def generate_ai_caption(file_info):
         f"┣ 🌍 <b>সার্ভার:</b> <b>{file_info.get('server') or 'Auto Premium'}</b>{expiry_text}\n"
         f"┗ ⚡ <b>সার্ভার পিং:</b> {ping_status}"
         f"</blockquote>\n\n"
-        f"🛠 <b>কীভাবে কানেক্ট করবেন?</b>\n"
-        f"<i>{setup}</i>\n"
+        f"📺 <b>Subscribe Our YouTube Channel:</b>\n"
+        f"👉 <a href='{YOUTUBE_CHANNEL}'><b>It's Me Ratul </b></a>\n"
     )
+
+# ==========================================
+# SCHEDULED JOB: AUTO DELETE SENT FILE
+# ==========================================
+async def auto_delete_sent_file(context: ContextTypes.DEFAULT_TYPE):
+    job_data = context.job.data
+    try:
+        # ডিলিট ফাইল মেসেজ
+        await context.bot.delete_message(
+            chat_id=job_data["chat_id"],
+            message_id=job_data["message_id"]
+        )
+        # নোটিফিকেশন মেসেজ
+        await context.bot.send_message(
+            chat_id=job_data["chat_id"],
+            text=(
+                "🔒 <b>নিরাপত্তার স্বার্থে আপনার ডাউনলোড করা ফাইলটি ৩০ মিনিট পার হওয়ায় ডিলিট করা হয়েছে।</b>\n\n"
+                "প্রয়োজন হলে বটের ডিরেক্ট লিংক থেকে আবার নতুন করে ডাউনলোড করে নিতে পারেন।"
+            ),
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
 
 # ==========================================
 # DEEP-LINK DOWNLOAD & START HANDLER
 # ==========================================
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user:
+        return
+
     user = update.effective_user
-    text = update.message.text.strip()
+    text = update.message.text.strip() if update.message and update.message.text else ""
 
     await users_col.update_one(
         {"_id": user.id},
@@ -550,11 +575,15 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         upsert=True
     )
 
+    # Force Subscription Check
     if not await is_subscribed(context.bot, user.id):
         buttons = []
         for ch in FORCE_CHANNELS:
             buttons.append([InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{ch.replace('@', '')}")])
         
+        # YouTube Button Added in Force Sub
+        buttons.append([InlineKeyboardButton("📺 Subscribe YouTube", url=YOUTUBE_CHANNEL)])
+
         payload = text.replace("/start", "").strip()
         url_callback = f"https://t.me/{sys_memory['bot_username']}?start={payload}" if payload else ""
         
@@ -562,13 +591,14 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buttons.append([InlineKeyboardButton("🔄 Try Again", url=url_callback)])
 
         await update.message.reply_text(
-            "⚠️ <b>ফাইলটি ডাউনলোড করতে আমাদের প্রিমিয়াম চ্যানেলে জয়েন করুন:</b>\n\n"
-            "চ্যানেলে জয়েন করার পর আবার লিঙ্কে ক্লিক করুন বা <b>Try Again</b> চাপুন।",
+            "⚠️ <b>ফাইলটি ডাউনলোড করতে আমাদের চ্যানেল ও ইউটিউবে যুক্ত হোন:</b>\n\n"
+            "যুক্ত হওয়ার পর আবার লিঙ্কে ক্লিক করুন বা <b>Try Again</b> বাটনে চাপুন।",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(buttons)
         )
         return
 
+    # Process File Download Request
     if "get_" in text:
         uid = text.split("get_")[-1].strip()
         file_doc = await files_col.find_one({"uid": uid})
@@ -580,19 +610,45 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await files_col.update_one({"uid": uid}, {"$inc": {"downloads": 1}})
         await log_analytics("file_downloaded", {"uid": uid, "user_id": user.id})
 
-        await context.bot.send_document(
+        app_name, play_store_link, setup_instructions = get_app_details(file_doc["name"])
+
+        # 🚀 Advanced Custom Caption with Setup Instructions & CTA
+        download_caption = (
+            f"✅ <b>{file_doc.get('server', 'Auto Premium')} Server Config</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🛡️ <b>নির্ধারিত অ্যাপ:</b> <code>{app_name}</code>\n\n"
+            f"🛠️ <b>কীভাবে ইমপোর্ট ও কানেক্ট করবেন?</b>\n"
+            f"<i>{setup_instructions}</i>\n\n"
+            f"📥 <b>অ্যাপ ডাউনলোড লিংক:</b>\n"
+            f"🔗 <a href='{play_store_link}'><b>Google Play Store</b></a>\n\n"
+            f"📺 <b>আমাদের ইউটিউব চ্যানেল সাবস্ক্রাইব করুন:</b>\n"
+            f"👉 <a href='{YOUTUBE_CHANNEL}'><b>It's Me Ratul FTI</b></a>\n\n"
+            f"⏳ <i>নোট: নিরাপত্তার স্বার্থে এই ফাইলটি ঠিক ৩০ মিনিট পর স্বয়ংক্রিয়ভাবে ডিলিট হয়ে যাবে।</i>"
+        )
+
+        sent_msg = await context.bot.send_document(
             chat_id=user.id,
             document=file_doc["id"],
-            caption=f"✅ <b>{file_doc.get('server', 'Auto Premium')} Server Config</b>\nDownloaded via VIP Enterprise Bot.",
+            caption=download_caption,
             parse_mode="HTML"
+        )
+
+        # ⏱️ Schedule file auto-deletion exactly after 30 minutes (1800 seconds)
+        context.job_queue.run_once(
+            auto_delete_sent_file,
+            when=1800,
+            data={"chat_id": user.id, "message_id": sent_msg.message_id}
         )
         return
 
+    # Default Welcome Message
     await update.message.reply_text(
         f"👋 হ্যালো <b>{html.escape(user.first_name)}</b>!\n\n"
         "🛡️ <b>VIP ENTERPRISE VPN BOT</b> এ আপনাকে স্বাগতম।\n"
-        "এখানে আপনি পাবেন একদম ফ্রেশ এবং সিকিউর প্রিমিয়াম ভিপিএন কনফিগ ফাইল।",
-        parse_mode="HTML"
+        "এখানে আপনি পাবেন একদম ফ্রেশ এবং সিকিউর প্রিমিয়াম ভিপিএন কনফিগ ফাইল।\n\n"
+        f"📺 সাপোর্ট দিতে আমাদের <a href='{YOUTUBE_CHANNEL}'><b>ইউটিউব চ্যানেল</b></a> সাবস্ক্রাইব করে সাথেই থাকুন!",
+        parse_mode="HTML",
+        disable_web_page_preview=True
     )
 
 # ==========================================
@@ -654,7 +710,7 @@ def get_expiry_keyboard():
 # UPLOAD FLOW HANDLERS
 # ==========================================
 async def start_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not update.effective_user or update.effective_user.id != ADMIN_ID:
         return ConversationHandler.END
 
     if not update.message or not update.message.document:
@@ -697,6 +753,8 @@ async def process_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["temp"]["server"] = None if val == "SKIP" else val
         await query.edit_message_text(f"🌍 সার্ভার: <b>{val}</b>", parse_mode="HTML")
     else:
+        if not update.message or not update.message.text:
+            return ASK_SERVER
         context.user_data["temp"]["server"] = update.message.text.strip()
 
     await context.bot.send_message(
@@ -715,6 +773,8 @@ async def process_host(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["temp"]["host"] = None
         await update.callback_query.edit_message_text("🌐 Host: <i>Skipped</i>", parse_mode="HTML")
     else:
+        if not update.message or not update.message.text:
+            return ASK_HOST
         text = update.message.text.strip()
         context.user_data["temp"]["host"] = text if text else None
 
@@ -746,6 +806,8 @@ async def process_expiry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(f"⏳ মেয়াদ: <b>{val}</b>", parse_mode="HTML")
     else:
+        if not update.message or not update.message.text:
+            return ASK_EXPIRY
         text = update.message.text.strip()
         expiry_date, total_days = parse_expiry(text)
         context.user_data["temp"]["expiry_raw"] = text
@@ -770,6 +832,8 @@ async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text("💬 মেসেজ: <i>Skipped</i>", parse_mode="HTML")
         custom_msg = None
     else:
+        if not update.message or not update.message.text:
+            return ASK_CUSTOM
         custom_msg = update.message.text.strip()
 
     temp = context.user_data["temp"]
@@ -793,7 +857,6 @@ async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await files_col.insert_one(temp)
     queue_count = await files_col.count_documents({"status": "queued"})
 
-    # 🐛 FOOLPROOF QUOTATION BUG FIX
     ping_val = temp.get("ping")
     ping_str = f"{ping_val} ms" if ping_val else "N/A"
 
@@ -831,7 +894,8 @@ async def handle_confirm_action(update: Update, context: ContextTypes.DEFAULT_TY
 
     if query.data == "act_now":
         await query.edit_message_text("⚡ <b>পোস্টিং শুরু হচ্ছে...</b>", parse_mode="HTML")
-        # 🔗 DIRECT LINKED POSTING ENGINE TRIGGER
+        # 🔗 EXECUTION TRIGGER WILL BE HANDLED VIA DIRECT IMPORTS IN PART 2
+        from bot import execute_posting  # late import connection
         await execute_posting(context, ADMIN_ID)
         return ConversationHandler.END
     elif query.data == "act_1h":
@@ -854,6 +918,9 @@ async def handle_confirm_action(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 async def process_custom_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return ASK_CUSTOM_TIME
+        
     time_str = update.message.text.strip()
     try:
         target_time = datetime.strptime(time_str, "%H:%M").time()
@@ -876,15 +943,15 @@ async def process_custom_time(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ConversationHandler.END
 
 async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ আপলোড প্রক্রিয়া বাতিল করা হয়েছে।", parse_mode="HTML")
+    if update.message:
+        await update.message.reply_text("❌ আপলোড প্রক্রিয়া বাতিল করা হয়েছে।", parse_mode="HTML")
     return ConversationHandler.END
 
 # ==========================================
 # END OF PART 1
 # ==========================================
-
 # ==========================================
-# VIP ENTERPRISE VPN BOT
+# VIP ENTERPRISE VPN BOT (UPGRADED V3)
 # PART 2 / 2
 # POSTING ENGINE + AUTO REPOST + COMMANDS + ADMIN PANEL + MAIN
 # ==========================================
@@ -913,7 +980,7 @@ async def build_final_caption(file_info):
 
     return (
         f"{caption}\n"
-        f"🔗 <a href='{url}'><b>📥 ফাইলটি ডাউনলোড করুন</b></a>"
+        f"🔗 <a href='{url}'><b>📥 ফাইলটি ডাউনলোড করুন (Download)</b></a>"
     )
 
 # ==========================================
@@ -1226,14 +1293,15 @@ async def auto_cleanup(context: ContextTypes.DEFAULT_TYPE):
                 text=f"🧹 <b>Analytics Cleanup</b>\nDeleted: {result.deleted_count} old records.",
                 parse_mode="HTML",
             )
-    except Exception as e:
+    except Exception:
         pass
 
 # ==========================================
-# COMMANDS & BROADCAST
+# COMMANDS & BROADCAST (100% BULLETPROOF)
 # ==========================================
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    # 🐛 FOOLPROOF FIX: channels/bg update protection
+    if not update.effective_user or update.effective_user.id != ADMIN_ID:
         return
 
     text = " ".join(context.args)
@@ -1249,8 +1317,9 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tasks.append(
             context.bot.send_message(
                 chat_id=user["_id"],
-                text=f"📢 <b>ADMIN NOTICE</b>\n\n{text}",
+                text=f"📢 <b>ADMIN NOTICE</b>\n\n{text}\n\n📺 <a href='{YOUTUBE_CHANNEL}'><b>Subscribe YouTube</b></a>",
                 parse_mode="HTML",
+                disable_web_page_preview=True
             )
         )
 
@@ -1263,7 +1332,7 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not update.effective_user or update.effective_user.id != ADMIN_ID:
         return
 
     stats = await stats_col.find_one({"_id": "global_stats"}) or {}
@@ -1274,23 +1343,25 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uptime = str(utc_now() - sys_memory["start_time"]).split(".")[0]
 
     txt = (
-        f"📊 <b>VIP DASHBOARD</b>\n"
+        f"📊 <b>VIP DASHBOARD (V3)</b>\n"
         f"━━━━━━━━━━━━━━\n"
         f"👥 Total Users: <b>{total_users}</b>\n"
         f"📦 Files in Queue: <b>{queued}</b>\n"
         f"🚀 Active Posted: <b>{posted}</b>\n"
         f"📈 Total Published: <b>{stats.get('total', 0)}</b>\n"
-        f"⏱ Bot Uptime: <b>{uptime}</b>"
+        f"⏱ Bot Uptime: <b>{uptime}</b>\n\n"
+        f"📺 <b>Promoting:</b> <a href='{YOUTUBE_CHANNEL}'>It's Me Ratul FTI</a>"
     )
 
     await update.message.reply_text(
         txt,
         parse_mode="HTML",
+        disable_web_page_preview=True,
         reply_markup=get_admin_home_keyboard()
     )
 
 async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not update.effective_user or update.effective_user.id != ADMIN_ID:
         return
 
     files = await files_col.find({"status": "queued"}).to_list(length=20)
@@ -1309,7 +1380,7 @@ async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(txt, parse_mode="HTML")
 
 async def clear_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not update.effective_user or update.effective_user.id != ADMIN_ID:
         return
 
     result = await files_col.delete_many({"status": "queued"})
@@ -1328,9 +1399,12 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 /broadcast [msg] - সব ইউজারকে মেসেজ দিন\n"
         "🔹 /ping - বটের রেসপন্স স্পিড\n"
     )
-    await update.message.reply_text(txt, parse_mode="HTML")
+    if update.message:
+        await update.message.reply_text(txt, parse_mode="HTML")
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
     start = time.perf_counter()
     msg = await update.message.reply_text("🏓 Testing ping...")
     end = time.perf_counter()
@@ -1355,12 +1429,16 @@ def get_admin_home_keyboard():
     )
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not update.effective_user or update.effective_user.id != ADMIN_ID:
         return
-    await update.message.reply_text("⚙️ <b>VIP ADMIN PANEL</b>", parse_mode="HTML", reply_markup=get_admin_home_keyboard())
+    await update.message.reply_text("⚙️ <b>VIP ADMIN PANEL (V3 PREMIUM)</b>", parse_mode="HTML", reply_markup=get_admin_home_keyboard())
 
 async def admin_panel_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    # 🐛 FOOLPROOF CRASH PROTECTION
+    if not update.effective_user or update.effective_user.id != ADMIN_ID:
+        return
+
+    if not update.message or not update.message.text:
         return
 
     text = update.message.text.strip()
@@ -1379,14 +1457,15 @@ async def admin_panel_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         await cmd_ping(update, context)
     elif text == "⚙️ System Status":
         uptime = str(utc_now() - sys_memory["start_time"]).split(".")[0]
-        # 🐛 FOOLPROOF QUOTATION BUG FIX
         ai_status = "✅ Active" if client else "⚠️ Fallback Mode"
         await update.message.reply_text(
             (
                 "⚙️ <b>SYSTEM STATUS</b>\n\n"
                 f"⏱ Uptime: <b>{uptime}</b>\n"
                 f"🧠 MongoDB: ✅ Connected\n"
-                f"🤖 OpenAI API: {ai_status}"
+                f"🤖 OpenAI API: {ai_status}\n"
+                f"📺 YouTube Link: Active\n"
+                f"⏱️ Auto-Delete: 30 Mins (Active)"
             ),
             parse_mode="HTML",
         )
@@ -1405,8 +1484,6 @@ async def bot_init(application: Application):
     application.job_queue.run_repeating(process_auto_reposts, interval=3600, first=60)
     # Expiry Cleaner (Every 10 mins)
     application.job_queue.run_repeating(expiry_monitor, interval=600, first=120)
-    # Analytics Cleanup (Daily)
-    application.job_queue.run_repeating(auto_cleanup, interval=86400, first=300)
 
     logging.info("✅ Bot init completed perfectly.")
 
@@ -1473,5 +1550,5 @@ if __name__ == "__main__":
         )
     )
 
-    print("🚀 VIP ENTERPRISE VPN BOT (V2 PREMIUM) IS RUNNING...")
+    print("🚀 VIP ENTERPRISE VPN BOT (V3 PRO PREMIUM) IS RUNNING...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
