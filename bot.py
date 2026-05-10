@@ -538,7 +538,6 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text.strip()
 
-    # Save User to DB
     await users_col.update_one(
         {"_id": user.id},
         {
@@ -551,13 +550,11 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         upsert=True
     )
 
-    # Sub-to-Unlock / Force Channel Check
     if not await is_subscribed(context.bot, user.id):
         buttons = []
         for ch in FORCE_CHANNELS:
             buttons.append([InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{ch.replace('@', '')}")])
         
-        # Pass the payload back via query parameter if downloading a file
         payload = text.replace("/start", "").strip()
         url_callback = f"https://t.me/{sys_memory['bot_username']}?start={payload}" if payload else ""
         
@@ -572,7 +569,6 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Process File Download Request
     if "get_" in text:
         uid = text.split("get_")[-1].strip()
         file_doc = await files_col.find_one({"uid": uid})
@@ -581,7 +577,6 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ <b>ফাইলটি পাওয়া যায়নি অথবা মেয়াদ শেষ হয়ে গেছে!</b>", parse_mode="HTML")
             return
 
-        # Update download counter
         await files_col.update_one({"uid": uid}, {"$inc": {"downloads": 1}})
         await log_analytics("file_downloaded", {"uid": uid, "user_id": user.id})
 
@@ -593,7 +588,6 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Default Welcome Message
     await update.message.reply_text(
         f"👋 হ্যালো <b>{html.escape(user.first_name)}</b>!\n\n"
         "🛡️ <b>VIP ENTERPRISE VPN BOT</b> এ আপনাকে স্বাগতম।\n"
@@ -799,12 +793,16 @@ async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await files_col.insert_one(temp)
     queue_count = await files_col.count_documents({"status": "queued"})
 
+    # 🐛 FOOLPROOF QUOTATION BUG FIX
+    ping_val = temp.get("ping")
+    ping_str = f"{ping_val} ms" if ping_val else "N/A"
+
     txt = (
         "✅ <b>CONFIG READY IN QUEUE</b>\n\n"
         f"📄 <code>{temp['name']}</code>\n"
         f"🌍 Server: <b>{temp['server'] or 'Auto Premium'}</b>\n"
         f"⏳ Expiry: <b>{temp['expiry_raw'] or 'Unlimited'}</b>\n"
-        f"⚡ Ping Tested: <b>{f'{temp['ping']} ms' if temp.get('ping') else 'N/A'}</b>\n"
+        f"⚡ Ping Tested: <b>{ping_str}</b>\n"
         f"♻️ Auto Repost Days: <b>{len(temp['repost_versions'])}</b>\n\n"
         f"📦 Total in Queue: <b>{queue_count}</b>"
     )
@@ -833,7 +831,8 @@ async def handle_confirm_action(update: Update, context: ContextTypes.DEFAULT_TY
 
     if query.data == "act_now":
         await query.edit_message_text("⚡ <b>পোস্টিং শুরু হচ্ছে...</b>", parse_mode="HTML")
-        # trigger execution handler (defined in part 2)
+        # 🔗 DIRECT LINKED POSTING ENGINE TRIGGER
+        await execute_posting(context, ADMIN_ID)
         return ConversationHandler.END
     elif query.data == "act_1h":
         await query.edit_message_text("✅ <b>১ ঘণ্টা পর পোস্ট হবে।</b>", parse_mode="HTML")
@@ -1284,7 +1283,6 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏱ Bot Uptime: <b>{uptime}</b>"
     )
 
-    # 🐛 FIXED BUG: Used ReplyKeyboardMarkup correctly instead of wrapping in InlineKeyboardMarkup
     await update.message.reply_text(
         txt,
         parse_mode="HTML",
@@ -1381,12 +1379,14 @@ async def admin_panel_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         await cmd_ping(update, context)
     elif text == "⚙️ System Status":
         uptime = str(utc_now() - sys_memory["start_time"]).split(".")[0]
+        # 🐛 FOOLPROOF QUOTATION BUG FIX
+        ai_status = "✅ Active" if client else "⚠️ Fallback Mode"
         await update.message.reply_text(
             (
                 "⚙️ <b>SYSTEM STATUS</b>\n\n"
                 f"⏱ Uptime: <b>{uptime}</b>\n"
                 f"🧠 MongoDB: ✅ Connected\n"
-                f"🤖 OpenAI API: {'✅ Active' if client else '⚠️ Fallback Mode'}"
+                f"🤖 OpenAI API: {ai_status}"
             ),
             parse_mode="HTML",
         )
@@ -1433,7 +1433,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("broadcast", broadcast_message))
     app.add_handler(CommandHandler("panel", admin_panel))
 
-    # 🐛 FIXED BUG: Set per_message=False so regular document messages trigger Conversation correctly
     conv_handler = ConversationHandler(
         per_message=False,
         entry_points=[MessageHandler(filters.Document.ALL, start_upload)],
