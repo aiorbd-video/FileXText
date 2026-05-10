@@ -982,26 +982,20 @@ async def send_post_to_channel(context, channel_id, caption, thumb_bytes):
 # ==========================================
 # FINAL CAPTION
 # ==========================================
-async def build_final_caption(file_info):
+# ==========================================
+# FINAL CAPTION
+# ==========================================
+async def build_final_caption(context, file_info):
     caption = await generate_ai_caption(file_info)
-    url = build_safe_link(sys_memory["bot_username"], file_info["uid"])
+    
+    # 🐛 100% BULLETPROOF: মেমোরির ভরসায় না থেকে সরাসরি context থেকে আসল ইউজারনেম নেওয়া
+    username = context.bot.username.replace("@", "").strip()
+    url = f"https://t.me/{username}?start=get_{file_info['uid']}"
 
     return (
         f"{caption}\n"
         f"🔗 <a href='{url}'><b>📥 ফাইলটি ডাউনলোড করুন (Download)</b></a>"
     )
-
-# ==========================================
-# POSTING LOCK
-# ==========================================
-async def acquire_posting_lock():
-    if sys_memory["posting_lock"]:
-        return False
-    sys_memory["posting_lock"] = True
-    return True
-
-def release_posting_lock():
-    sys_memory["posting_lock"] = False
 
 # ==========================================
 # POST SINGLE FILE
@@ -1013,7 +1007,9 @@ async def post_single_file(
 ):
     try:
         working_doc = dict(file_doc)
-        caption = await build_final_caption(working_doc)
+        
+        # 🐛 ফিক্সড: সঠিক ইউজারনেম পেতে context পাস করা হলো
+        caption = await build_final_caption(context, working_doc)
         thumb = auto_thumbnail_bytes(working_doc)
         thumb_bytes = thumb.getvalue()
 
@@ -1114,6 +1110,20 @@ async def post_single_file(
             parse_mode="HTML",
         )
         return False
+
+
+# ==========================================
+# POSTING LOCK
+# ==========================================
+async def acquire_posting_lock():
+    if sys_memory["posting_lock"]:
+        return False
+    sys_memory["posting_lock"] = True
+    return True
+
+def release_posting_lock():
+    sys_memory["posting_lock"] = False
+# ==========================================
 
 # ==========================================
 # EXECUTE POSTING
