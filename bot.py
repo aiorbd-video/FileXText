@@ -264,7 +264,10 @@ def calculate_remaining_days(expiry_date):
     return math.ceil(seconds_left / 86400)
 
 def build_safe_link(bot_username: str, uid: str) -> str:
-    return f"https://t.me/{bot_username}?start=get_{uid}"
+    # 🐛 FOOLPROOF FIX: ইউজারনেম খালি থাকলে গ্লোবাল মেমোরি থেকে ব্যাকআপ নেবে
+    username = bot_username if bot_username else sys_memory.get("bot_username", "")
+    username = username.replace("@", "").strip()
+    return f"https://t.me/{username}?start=get_{uid}"
 
 async def log_analytics(event_name: str, payload: dict):
     try:
@@ -560,6 +563,10 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user:
         return
 
+    # 🐛 FOOLPROOF FIX: ডাউনলোড লিংকের জন্য বটের ইউজারনেম মেমোরিতে নিশ্চিত করা
+    if not sys_memory.get("bot_username"):
+        sys_memory["bot_username"] = context.bot.username
+
     user = update.effective_user
     text = update.message.text.strip() if update.message and update.message.text else ""
 
@@ -574,6 +581,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         },
         upsert=True
     )
+
 
     # Force Subscription Check
     if not await is_subscribed(context.bot, user.id):
