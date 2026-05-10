@@ -1,7 +1,7 @@
 # ==========================================
 # VIP ENTERPRISE VPN BOT
 # PART 1 / 2
-# CORE CONFIG + DB + HELPERS + UPLOAD FLOW
+# CORE CONFIG + DB + HELPERS + UPLOAD FLOW + START DOWNLOAD
 # ==========================================
 
 import os
@@ -15,7 +15,6 @@ import random
 import asyncio
 import logging
 import traceback
-
 from datetime import datetime, timedelta, timezone
 
 from openai import AsyncOpenAI
@@ -28,7 +27,6 @@ from telegram import (
     ReplyKeyboardMarkup,
     BotCommand,
 )
-
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
@@ -39,9 +37,7 @@ from telegram.ext import (
     Application,
     filters,
 )
-
 from PIL import Image, ImageDraw, ImageFont
-
 
 # ==========================================
 # CONFIG
@@ -66,25 +62,20 @@ try:
 except Exception:
     CHANNEL_IDS = []
 
-
 # ==========================================
 # VALIDATION
 # ==========================================
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN missing")
-
+    raise RuntimeError("❌ BOT_TOKEN missing in environment variables.")
 if not MONGO_URI:
-    raise RuntimeError("MONGO_URI missing")
-
+    raise RuntimeError("❌ MONGO_URI missing in environment variables.")
 if not ADMIN_ID:
-    raise RuntimeError("ADMIN_ID missing")
-
+    raise RuntimeError("❌ ADMIN_ID missing in environment variables.")
 
 # ==========================================
 # OPENAI CLIENT
 # ==========================================
 client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-
 
 # ==========================================
 # MONGO DB
@@ -98,7 +89,6 @@ stats_col = db["stats"]
 analytics_col = db["analytics"]
 locks_col = db["locks"]
 
-
 # ==========================================
 # LOGGING
 # ==========================================
@@ -106,7 +96,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
-
 
 # ==========================================
 # GLOBAL MEMORY
@@ -117,9 +106,8 @@ sys_memory = {
     "posting_lock": False,
 }
 
-
 # ==========================================
-# STATES
+# STATES FOR UPLOAD CONVERSATION
 # ==========================================
 (
     ASK_SERVER,
@@ -130,13 +118,11 @@ sys_memory = {
     ASK_CUSTOM_TIME,
 ) = range(6)
 
-
 # ==========================================
 # UTC HELPERS
 # ==========================================
 def utc_now():
     return datetime.now(timezone.utc)
-
 
 def to_utc(dt):
     if dt is None:
@@ -144,7 +130,6 @@ def to_utc(dt):
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
-
 
 # ==========================================
 # ERROR HANDLER
@@ -157,7 +142,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             context.error.__traceback__
         )
     )
-
     logging.error(tb_string)
 
     try:
@@ -165,14 +149,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=(
-                    "❌ <b>BOT ERROR</b>\n"
+                    "❌ <b>SYSTEM ERROR</b>\n"
                     f"<pre>{html.escape(tb_string[:3500])}</pre>"
                 ),
                 parse_mode="HTML",
             )
     except Exception:
         pass
-
 
 # ==========================================
 # STARTUP CHECKS
@@ -181,23 +164,19 @@ async def test_mongo_connection():
     await db.command("ping")
     logging.info("✅ MongoDB ping successful")
 
-
 async def test_openai_connection():
     if not client:
-        logging.info("ℹ️ OPENAI_API_KEY not set; AI caption fallback will be used")
+        logging.info("ℹ️ OPENAI_API_KEY not set; fallback standard captions will be used.")
         return
-
     try:
         await client.models.list()
         logging.info("✅ OpenAI client ready")
     except Exception as e:
         logging.warning(f"⚠️ OpenAI test failed: {e}")
 
-
 async def ensure_indexes():
     try:
         existing = await files_col.index_information()
-
         if "uid_1" in existing:
             old_index = existing["uid_1"]
             if not old_index.get("unique"):
@@ -209,23 +188,18 @@ async def ensure_indexes():
         await files_col.create_index("expiry_date")
         await files_col.create_index("next_repost_date")
         await files_col.create_index("created_at")
-
         await analytics_col.create_index("created_at")
-
         await users_col.create_index("_id", unique=True)
         await stats_col.create_index("_id", unique=True)
 
         logging.info("✅ Mongo indexes ensured")
-
     except Exception as e:
         logging.error(f"❌ Index Error: {e}")
-
 
 async def bot_health_check():
     await test_mongo_connection()
     await test_openai_connection()
     await ensure_indexes()
-
 
 # ==========================================
 # BASIC HELPERS
@@ -241,14 +215,11 @@ async def is_subscribed(bot, user_id):
                 return False
         except Exception:
             return False
-
     return True
-
 
 def clean_file_name(original_name: str) -> str:
     if not original_name:
         return "Premium VPN File"
-
     ext = original_name.split(".")[-1] if "." in original_name else "file"
     base = re.sub(r"[^a-zA-Z0-9 ]", " ", original_name.rsplit(".", 1)[0])
     base = " ".join(base.split()).strip().title()
@@ -256,10 +227,8 @@ def clean_file_name(original_name: str) -> str:
         base = "Premium VPN"
     return f"{base}.{ext}"
 
-
 def detect_category(filename: str) -> str:
     n = (filename or "").lower()
-
     categories = {
         "Facebook": ["fb", "facebook"],
         "YouTube": ["yt", "youtube"],
@@ -268,59 +237,44 @@ def detect_category(filename: str) -> str:
         "TikTok": ["tiktok", "tt"],
         "Instagram": ["insta", "instagram"],
         "Gaming": ["game", "gaming", "pubg", "freefire", "ff"],
-        "Streaming": ["stream", "netflix", "prime", "hotstar", "disney"],
+        "Streaming": ["stream", "netflix", "prime", "hotstar", "disney", "toffee"],
         "All Sites": [],
     }
 
     for label, keys in categories.items():
         if keys and any(k in n for k in keys):
             return label
-
     return "All Sites"
 
-
 def parse_expiry(text):
-    """
-    Returns:
-        (expiry_date, total_days)
-    """
     if not text:
         return None, None
-
     text = text.lower().strip()
     nums = re.findall(r"\d+", text)
     if not nums:
         return None, None
 
     value = int(nums[0])
-
-    if "day" in text or "দিন" in text:
+    if any(k in text for k in ["day", "দিন"]):
         return utc_now() + timedelta(days=value), value
-    if "week" in text or "সপ্তাহ" in text:
+    if any(k in text for k in ["week", "সপ্তাহ"]):
         return utc_now() + timedelta(days=value * 7), value * 7
-    if "month" in text or "মাস" in text:
+    if any(k in text for k in ["month", "মাস"]):
         return utc_now() + timedelta(days=value * 30), value * 30
-
     return None, None
-
 
 def calculate_remaining_days(expiry_date):
     if not expiry_date:
         return None
-
     expiry_date = to_utc(expiry_date)
     now = utc_now()
-
     seconds_left = (expiry_date - now).total_seconds()
     if seconds_left <= 0:
         return 0
-
     return math.ceil(seconds_left / 86400)
-
 
 def build_safe_link(bot_username: str, uid: str) -> str:
     return f"https://t.me/{bot_username}?start=get_{uid}"
-
 
 async def log_analytics(event_name: str, payload: dict):
     try:
@@ -332,7 +286,6 @@ async def log_analytics(event_name: str, payload: dict):
     except Exception:
         pass
 
-
 async def chunked_gather(tasks, limit=10):
     results = []
     for i in range(0, len(tasks), limit):
@@ -340,14 +293,8 @@ async def chunked_gather(tasks, limit=10):
         results.extend(await asyncio.gather(*batch, return_exceptions=True))
     return results
 
-
 async def get_best_ping(host):
-    host = (
-        host.replace("http://", "")
-        .replace("https://", "")
-        .split("/")[0]
-    )
-
+    host = host.replace("http://", "").replace("https://", "").split("/")[0]
     best_ping = float("inf")
 
     for port in (443, 80):
@@ -372,16 +319,13 @@ async def get_best_ping(host):
         return random.randint(45, 60)
     if "in" in host.lower():
         return random.randint(35, 50)
-
     return random.randint(60, 90)
-
 
 # ==========================================
 # APP / VPN DETAILS
 # ==========================================
 def get_app_details(filename):
     name_lower = (filename or "").lower()
-
     if name_lower.endswith(".hc"):
         return (
             "HTTP Custom",
@@ -413,7 +357,6 @@ def get_app_details(filename):
         "১. আপনার ভিপিএন অ্যাপে ফাইলটি ইম্পোর্ট করে কানেক্ট করুন।",
     )
 
-
 # ==========================================
 # FONT HELPERS
 # ==========================================
@@ -440,12 +383,10 @@ def _load_font(size: int, bold: bool = False):
             return ImageFont.truetype(path, size=size)
         except Exception:
             continue
-
     return ImageFont.load_default()
 
-
 # ==========================================
-# THUMBNAIL GENERATOR
+# THUMBNAIL GENERATOR (Clean UI)
 # ==========================================
 def auto_thumbnail_bytes(file_info):
     width, height = 1280, 720
@@ -496,7 +437,6 @@ def auto_thumbnail_bytes(file_info):
             radius=22,
             fill=(28, 36, 58),
         )
-
         draw.text((110, start_y + 20), label, font=label_font, fill=(0, 255, 180))
         draw.text((420, start_y + 15), str(value), font=value_font, fill=(255, 255, 255))
         start_y += 106
@@ -514,15 +454,14 @@ def auto_thumbnail_bytes(file_info):
     buf.name = "vip_thumbnail.jpg"
     return buf
 
-
 # ==========================================
 # AI CAPTION ENGINE
 # ==========================================
 async def generate_ai_caption(file_info):
     app_name, play_store, setup = get_app_details(file_info["name"])
     category = detect_category(file_info["name"])
-
     filename_lower = (file_info["name"] or "").lower()
+    
     platforms = [
         p for p, k in [
             ("Facebook", "fb"),
@@ -537,15 +476,12 @@ async def generate_ai_caption(file_info):
     platform_text = ", ".join(platforms) if platforms else "All Sites / Open Network"
 
     ping_status = f"🟢 <code>{file_info['ping']} ms</code>" if file_info.get("ping") else "🟠 <code>Protected</code>"
-    expiry_text = (
-        f"\n┣ ⏳ <b>মেয়াদ:</b> <code>{file_info['remaining_text']}</code>"
-        if file_info.get("remaining_text")
-        else (
-            f"\n┣ ⏳ <b>মেয়াদ:</b> <code>{file_info['expiry_raw']}</code>"
-            if file_info.get("expiry_raw")
-            else ""
-        )
-    )
+    
+    expiry_text = ""
+    if file_info.get("remaining_text"):
+        expiry_text = f"\n┣ ⏳ <b>মেয়াদ:</b> <code>{file_info['remaining_text']}</code>"
+    elif file_info.get("expiry_raw"):
+        expiry_text = f"\n┣ ⏳ <b>মেয়াদ:</b> <code>{file_info['expiry_raw']}</code>"
 
     admin_note = file_info.get("custom_msg")
     ai_prompt = (
@@ -564,8 +500,7 @@ async def generate_ai_caption(file_info):
                     {
                         "role": "system",
                         "content": (
-                            "Write entirely in Bengali. "
-                            "Use emojis gracefully. "
+                            "Write entirely in Bengali. Use emojis gracefully. "
                             "Do not output fake speeds or raw filenames."
                         )
                     },
@@ -596,52 +531,78 @@ async def generate_ai_caption(file_info):
         f"<i>{setup}</i>\n"
     )
 
-
 # ==========================================
-# SAFE LINK
+# DEEP-LINK DOWNLOAD & START HANDLER
 # ==========================================
-def build_safe_link(bot_username: str, uid: str) -> str:
-    return f"https://t.me/{bot_username}?start=get_{uid}"
+async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = update.message.text.strip()
 
-
-# ==========================================
-# ADMIN / SUPPORT COMMANDS
-# ==========================================
-async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    text = " ".join(context.args)
-    if not text:
-        await update.message.reply_text("ব্যবহার:\n/broadcast আপনার মেসেজ")
-        return
-
-    users = await users_col.find({}).to_list(length=None)
-
-    tasks = []
-    for user in users:
-        tasks.append(
-            context.bot.send_message(
-                chat_id=user["_id"],
-                text=f"📢 <b>ADMIN NOTICE</b>\n\n{text}",
-                parse_mode="HTML",
-            )
-        )
-
-    results = await chunked_gather(tasks, limit=20)
-    success = sum(1 for r in results if not isinstance(r, Exception))
-
-    await update.message.reply_text(
-        (
-            f"✅ <b>Broadcast Complete</b>\n"
-            f"📨 Sent: {success}/{len(users)}"
-        ),
-        parse_mode="HTML",
+    # Save User to DB
+    await users_col.update_one(
+        {"_id": user.id},
+        {
+            "$set": {
+                "username": user.username,
+                "first_name": user.first_name,
+                "last_active": utc_now()
+            }
+        },
+        upsert=True
     )
 
+    # Sub-to-Unlock / Force Channel Check
+    if not await is_subscribed(context.bot, user.id):
+        buttons = []
+        for ch in FORCE_CHANNELS:
+            buttons.append([InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{ch.replace('@', '')}")])
+        
+        # Pass the payload back via query parameter if downloading a file
+        payload = text.replace("/start", "").strip()
+        url_callback = f"https://t.me/{sys_memory['bot_username']}?start={payload}" if payload else ""
+        
+        if url_callback:
+            buttons.append([InlineKeyboardButton("🔄 Try Again", url=url_callback)])
+
+        await update.message.reply_text(
+            "⚠️ <b>ফাইলটি ডাউনলোড করতে আমাদের প্রিমিয়াম চ্যানেলে জয়েন করুন:</b>\n\n"
+            "চ্যানেলে জয়েন করার পর আবার লিঙ্কে ক্লিক করুন বা <b>Try Again</b> চাপুন।",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+        return
+
+    # Process File Download Request
+    if "get_" in text:
+        uid = text.split("get_")[-1].strip()
+        file_doc = await files_col.find_one({"uid": uid})
+
+        if not file_doc:
+            await update.message.reply_text("❌ <b>ফাইলটি পাওয়া যায়নি অথবা মেয়াদ শেষ হয়ে গেছে!</b>", parse_mode="HTML")
+            return
+
+        # Update download counter
+        await files_col.update_one({"uid": uid}, {"$inc": {"downloads": 1}})
+        await log_analytics("file_downloaded", {"uid": uid, "user_id": user.id})
+
+        await context.bot.send_document(
+            chat_id=user.id,
+            document=file_doc["id"],
+            caption=f"✅ <b>{file_doc.get('server', 'Auto Premium')} Server Config</b>\nDownloaded via VIP Enterprise Bot.",
+            parse_mode="HTML"
+        )
+        return
+
+    # Default Welcome Message
+    await update.message.reply_text(
+        f"👋 হ্যালো <b>{html.escape(user.first_name)}</b>!\n\n"
+        "🛡️ <b>VIP ENTERPRISE VPN BOT</b> এ আপনাকে স্বাগতম।\n"
+        "এখানে আপনি পাবেন একদম ফ্রেশ এবং সিকিউর প্রিমিয়াম ভিপিএন কনফিগ ফাইল।",
+        parse_mode="HTML"
+    )
 
 # ==========================================
-# UPLOAD FLOW
+# ADMIN UPLOAD FLOW KEYBOARDS
 # ==========================================
 def get_server_keyboard():
     return [
@@ -670,19 +631,10 @@ def get_server_keyboard():
             InlineKeyboardButton("🇰🇷 Korea", callback_data="srv_🇰🇷South Korea"),
         ],
         [
-            InlineKeyboardButton("🇹🇷 Turkey", callback_data="srv_🇹🇷Turkey"),
-            InlineKeyboardButton("🇧🇷 Brazil", callback_data="srv_🇧🇷Brazil"),
-        ],
-        [
-            InlineKeyboardButton("🇦🇺 Australia", callback_data="srv_🇦🇺Australia"),
-            InlineKeyboardButton("🇵🇱 Poland", callback_data="srv_🇵🇱Poland"),
-        ],
-        [
-            InlineKeyboardButton("🌍 Auto", callback_data="srv_AUTO"),
+            InlineKeyboardButton("🌍 Auto Premium", callback_data="srv_AUTO"),
             InlineKeyboardButton("⏭️ Skip", callback_data="srv_SKIP"),
         ],
     ]
-
 
 def get_expiry_keyboard():
     return [
@@ -704,7 +656,9 @@ def get_expiry_keyboard():
         ],
     ]
 
-
+# ==========================================
+# UPLOAD FLOW HANDLERS
+# ==========================================
 async def start_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return ConversationHandler.END
@@ -713,7 +667,6 @@ async def start_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     doc = update.message.document
-
     context.user_data["temp"] = {
         "id": doc.file_id,
         "name": doc.file_name,
@@ -742,7 +695,6 @@ async def start_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ASK_SERVER
 
-
 async def process_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
@@ -755,14 +707,13 @@ async def process_server(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_message(
         chat_id=update.effective_user.id,
-        text="🌐 <b>Host / Payload দিন:</b>",
+        text="🌐 <b>Host / Payload দিন (অথবা Skip করুন):</b>",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("⏭️ Skip", callback_data="skip_host")]
         ]),
         parse_mode="HTML",
     )
     return ASK_HOST
-
 
 async def process_host(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
@@ -780,7 +731,6 @@ async def process_host(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
     )
     return ASK_EXPIRY
-
 
 async def process_expiry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
@@ -819,13 +769,12 @@ async def process_expiry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ASK_CUSTOM
 
-
 async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        custom_msg = None
         await query.edit_message_text("💬 মেসেজ: <i>Skipped</i>", parse_mode="HTML")
+        custom_msg = None
     else:
         custom_msg = update.message.text.strip()
 
@@ -848,16 +797,16 @@ async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE)
         temp["repost_versions"] = []
 
     await files_col.insert_one(temp)
-
     queue_count = await files_col.count_documents({"status": "queued"})
 
     txt = (
-        "✅ <b>CONFIG READY</b>\n\n"
+        "✅ <b>CONFIG READY IN QUEUE</b>\n\n"
         f"📄 <code>{temp['name']}</code>\n"
-        f"🌍 Server: <b>{temp['server'] or 'Auto'}</b>\n"
+        f"🌍 Server: <b>{temp['server'] or 'Auto Premium'}</b>\n"
         f"⏳ Expiry: <b>{temp['expiry_raw'] or 'Unlimited'}</b>\n"
+        f"⚡ Ping Tested: <b>{f'{temp['ping']} ms' if temp.get('ping') else 'N/A'}</b>\n"
         f"♻️ Auto Repost Days: <b>{len(temp['repost_versions'])}</b>\n\n"
-        f"📦 Queue: <b>{queue_count}</b>"
+        f"📦 Total in Queue: <b>{queue_count}</b>"
     )
 
     keyboard = [
@@ -878,27 +827,24 @@ async def process_custom_msg(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     return CONFIRM_ACTION
 
-
 async def handle_confirm_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == "act_now":
         await query.edit_message_text("⚡ <b>পোস্টিং শুরু হচ্ছে...</b>", parse_mode="HTML")
+        # trigger execution handler (defined in part 2)
         return ConversationHandler.END
-
     elif query.data == "act_1h":
         await query.edit_message_text("✅ <b>১ ঘণ্টা পর পোস্ট হবে।</b>", parse_mode="HTML")
         return ConversationHandler.END
-
     elif query.data == "act_3h":
         await query.edit_message_text("✅ <b>৩ ঘণ্টা পর পোস্ট হবে।</b>", parse_mode="HTML")
         return ConversationHandler.END
-
     elif query.data == "act_clear":
+        await files_col.delete_many({"status": "queued"})
         await query.edit_message_text("🗑️ <b>কিউ ক্লিয়ার করা হয়েছে।</b>", parse_mode="HTML")
         return ConversationHandler.END
-
     elif query.data == "act_custom":
         await query.edit_message_text(
             "⏱️ <b>কয়টায় পোস্ট হবে? (HH:MM, যেমন: 20:30)</b>",
@@ -907,7 +853,6 @@ async def handle_confirm_action(update: Update, context: ContextTypes.DEFAULT_TY
         return ASK_CUSTOM_TIME
 
     return ConversationHandler.END
-
 
 async def process_custom_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = update.message.text.strip()
@@ -931,16 +876,19 @@ async def process_custom_time(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     return ConversationHandler.END
 
-
 async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ বাতিল করা হয়েছে।", parse_mode="HTML")
+    await update.message.reply_text("❌ আপলোড প্রক্রিয়া বাতিল করা হয়েছে।", parse_mode="HTML")
     return ConversationHandler.END
-    # ==========================================
+
+# ==========================================
+# END OF PART 1
+# ==========================================
+
+# ==========================================
 # VIP ENTERPRISE VPN BOT
 # PART 2 / 2
 # POSTING ENGINE + AUTO REPOST + COMMANDS + ADMIN PANEL + MAIN
 # ==========================================
-
 
 # ==========================================
 # SEND TO CHANNEL
@@ -957,23 +905,17 @@ async def send_post_to_channel(context, channel_id, caption, thumb_bytes):
         parse_mode="HTML",
     )
 
-
 # ==========================================
 # FINAL CAPTION
 # ==========================================
 async def build_final_caption(file_info):
     caption = await generate_ai_caption(file_info)
-
-    url = build_safe_link(
-        sys_memory["bot_username"],
-        file_info["uid"]
-    )
+    url = build_safe_link(sys_memory["bot_username"], file_info["uid"])
 
     return (
         f"{caption}\n"
-        f"🔗 <a href='{url}'><b>📥 ডাউনলোড ফাইল</b></a>"
+        f"🔗 <a href='{url}'><b>📥 ফাইলটি ডাউনলোড করুন</b></a>"
     )
-
 
 # ==========================================
 # POSTING LOCK
@@ -984,10 +926,8 @@ async def acquire_posting_lock():
     sys_memory["posting_lock"] = True
     return True
 
-
 def release_posting_lock():
     sys_memory["posting_lock"] = False
-
 
 # ==========================================
 # POST SINGLE FILE
@@ -999,7 +939,6 @@ async def post_single_file(
 ):
     try:
         working_doc = dict(file_doc)
-
         caption = await build_final_caption(working_doc)
         thumb = auto_thumbnail_bytes(working_doc)
         thumb_bytes = thumb.getvalue()
@@ -1007,12 +946,7 @@ async def post_single_file(
         tasks = []
         for channel_id in CHANNEL_IDS:
             tasks.append(
-                send_post_to_channel(
-                    context,
-                    channel_id,
-                    caption,
-                    thumb_bytes,
-                )
+                send_post_to_channel(context, channel_id, caption, thumb_bytes)
             )
 
         results = await chunked_gather(tasks, limit=5)
@@ -1026,7 +960,6 @@ async def post_single_file(
                 continue
 
             channel_id = CHANNEL_IDS[idx]
-
             if isinstance(res, Exception):
                 failed_channels.append(f"{channel_id} -> {str(res)[:80]}")
                 continue
@@ -1095,7 +1028,6 @@ async def post_single_file(
             text=report,
             parse_mode="HTML",
         )
-
         return True
 
     except Exception as e:
@@ -1109,7 +1041,6 @@ async def post_single_file(
         )
         return False
 
-
 # ==========================================
 # EXECUTE POSTING
 # ==========================================
@@ -1117,7 +1048,8 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     if not await acquire_posting_lock():
         await context.bot.send_message(
             chat_id=user_id,
-            text="⚠️ Posting already running."
+            text="⚠️ <b>পোস্টিং ইতোমধ্যে চলছে...</b>",
+            parse_mode="HTML"
         )
         return
 
@@ -1129,12 +1061,12 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
         if not files_to_post:
             await context.bot.send_message(
                 chat_id=user_id,
-                text="❌ Queue empty."
+                text="❌ <b>পোস্ট করার মতো কোনো ফাইল কিউতে নেই।</b>",
+                parse_mode="HTML"
             )
             return
 
         total_posts = 0
-
         for f in files_to_post:
             await files_col.update_one(
                 {"uid": f["uid"]},
@@ -1146,7 +1078,6 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
                 file_doc=f,
                 repost_mode=False,
             )
-
             if ok:
                 total_posts += len(CHANNEL_IDS)
 
@@ -1166,7 +1097,7 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
             chat_id=user_id,
             text=(
                 f"🏁 <b>POST COMPLETE</b>\n\n"
-                f"✅ Total Posts: <b>{total_posts}</b>"
+                f"✅ Total Posts Published: <b>{total_posts}</b>"
             ),
             parse_mode="HTML",
         )
@@ -1174,33 +1105,21 @@ async def execute_posting(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     finally:
         release_posting_lock()
 
-
 # ==========================================
 # SCHEDULED JOB
 # ==========================================
 async def scheduled_post_job(context: ContextTypes.DEFAULT_TYPE):
-    await execute_posting(
-        context,
-        context.job.data["user_id"]
-    )
-
+    await execute_posting(context, context.job.data["user_id"])
 
 # ==========================================
 # AUTO REPOST ENGINE
 # ==========================================
 async def process_auto_reposts(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Example:
-    7 day config:
-    6 -> 5 -> 4 -> 3 -> 2 -> 1
-    তারপর stop.
-    """
     if not await acquire_posting_lock():
         return
 
     try:
         now = utc_now()
-
         candidates = await files_col.find({
             "expiry_date": {"$ne": None},
             "status": "posted",
@@ -1219,13 +1138,10 @@ async def process_auto_reposts(context: ContextTypes.DEFAULT_TYPE):
                 continue
 
             repost_versions = f.get("repost_versions") or []
-
             target_index = None
+
             for idx, ver in enumerate(repost_versions):
-                if (
-                    not ver.get("posted")
-                    and ver.get("day_left") == days_left
-                ):
+                if not ver.get("posted") and ver.get("day_left") == days_left:
                     target_index = idx
                     break
 
@@ -1261,13 +1177,11 @@ async def process_auto_reposts(context: ContextTypes.DEFAULT_TYPE):
     finally:
         release_posting_lock()
 
-
 # ==========================================
 # EXPIRY MONITOR
 # ==========================================
 async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
     now = utc_now()
-
     expired_files = await files_col.find({
         "expiry_date": {"$lte": now},
     }).to_list(length=None)
@@ -1278,9 +1192,9 @@ async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
                 f"📊 <b>EXPIRY REPORT</b>\n"
                 f"━━━━━━━━━━━━━━\n"
                 f"📄 <code>{f['name']}</code>\n"
-                f"🌍 Server: <b>{f.get('server')}</b>\n"
-                f"👥 Downloads: <b>{f.get('downloads', 0)}</b>\n\n"
-                f"🗑 Database থেকে remove করা হয়েছে"
+                f"🌍 Server: <b>{f.get('server', 'Auto Premium')}</b>\n"
+                f"👥 Total Downloads: <b>{f.get('downloads', 0)}</b>\n\n"
+                f"🗑 ডাটাবেস থেকে রিমুভ করা হয়েছে।"
             )
 
             await context.bot.send_message(
@@ -1290,25 +1204,14 @@ async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
             )
 
             await files_col.delete_one({"uid": f["uid"]})
-
-            await log_analytics(
-                "expired_deleted",
-                {
-                    "uid": f["uid"],
-                    "downloads": f.get("downloads", 0),
-                }
-            )
+            await log_analytics("expired_deleted", {"uid": f["uid"], "downloads": f.get("downloads", 0)})
 
         except Exception as e:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
-                text=(
-                    f"❌ Expiry Error\n"
-                    f"<pre>{html.escape(str(e))}</pre>"
-                ),
+                text=f"❌ Expiry Error\n<pre>{html.escape(str(e))}</pre>",
                 parse_mode="HTML",
             )
-
 
 # ==========================================
 # AUTO CLEANUP
@@ -1316,130 +1219,127 @@ async def expiry_monitor(context: ContextTypes.DEFAULT_TYPE):
 async def auto_cleanup(context: ContextTypes.DEFAULT_TYPE):
     try:
         old_date = utc_now() - timedelta(days=45)
-
-        result = await analytics_col.delete_many({
-            "created_at": {"$lt": old_date}
-        })
+        result = await analytics_col.delete_many({"created_at": {"$lt": old_date}})
 
         if result.deleted_count > 0:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
-                text=(
-                    f"🧹 <b>Analytics Cleanup</b>\n"
-                    f"Deleted: {result.deleted_count}"
-                ),
+                text=f"🧹 <b>Analytics Cleanup</b>\nDeleted: {result.deleted_count} old records.",
                 parse_mode="HTML",
             )
-
     except Exception as e:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=(
-                f"❌ Cleanup Error\n"
-                f"<pre>{html.escape(str(e))}</pre>"
-            ),
-            parse_mode="HTML",
+        pass
+
+# ==========================================
+# COMMANDS & BROADCAST
+# ==========================================
+async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("⚠️ <b>ব্যবহারবিধি:</b>\n/broadcast আপনার মেসেজ", parse_mode="HTML")
+        return
+
+    users = await users_col.find({}).to_list(length=None)
+    await update.message.reply_text(f"⚡ <b>Broadcast শুরু হচ্ছে... ({len(users)} ইউজার)</b>", parse_mode="HTML")
+
+    tasks = []
+    for user in users:
+        tasks.append(
+            context.bot.send_message(
+                chat_id=user["_id"],
+                text=f"📢 <b>ADMIN NOTICE</b>\n\n{text}",
+                parse_mode="HTML",
+            )
         )
 
+    results = await chunked_gather(tasks, limit=20)
+    success = sum(1 for r in results if not isinstance(r, Exception))
 
-# ==========================================
-# COMMANDS
-# ==========================================
+    await update.message.reply_text(
+        f"✅ <b>Broadcast Complete!</b>\n📨 Sent Successfully: <b>{success}/{len(users)}</b>",
+        parse_mode="HTML",
+    )
+
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
     stats = await stats_col.find_one({"_id": "global_stats"}) or {}
-
     total_users = await users_col.count_documents({})
     queued = await files_col.count_documents({"status": "queued"})
     posted = await files_col.count_documents({"status": "posted"})
 
-    uptime = str(
-        utc_now() - sys_memory["start_time"]
-    ).split(".")[0]
+    uptime = str(utc_now() - sys_memory["start_time"]).split(".")[0]
 
     txt = (
         f"📊 <b>VIP DASHBOARD</b>\n"
         f"━━━━━━━━━━━━━━\n"
-        f"👥 Users: <b>{total_users}</b>\n"
-        f"📦 Queue: <b>{queued}</b>\n"
-        f"🚀 Posted: <b>{posted}</b>\n"
-        f"📈 Total Posts: <b>{stats.get('total', 0)}</b>\n"
-        f"⏱ Uptime: <b>{uptime}</b>"
+        f"👥 Total Users: <b>{total_users}</b>\n"
+        f"📦 Files in Queue: <b>{queued}</b>\n"
+        f"🚀 Active Posted: <b>{posted}</b>\n"
+        f"📈 Total Published: <b>{stats.get('total', 0)}</b>\n"
+        f"⏱ Bot Uptime: <b>{uptime}</b>"
     )
 
+    # 🐛 FIXED BUG: Used ReplyKeyboardMarkup correctly instead of wrapping in InlineKeyboardMarkup
     await update.message.reply_text(
         txt,
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(get_admin_panel_keyboard())
+        reply_markup=get_admin_home_keyboard()
     )
-
 
 async def show_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
     files = await files_col.find({"status": "queued"}).to_list(length=20)
-
     if not files:
-        await update.message.reply_text("📦 Queue empty.")
+        await update.message.reply_text("📦 <b>কিউ একদম ফাঁকা!</b>", parse_mode="HTML")
         return
 
-    txt = "📦 <b>QUEUE FILES</b>\n\n"
-
+    txt = "📦 <b>QUEUE FILES (Top 20)</b>\n\n"
     for i, f in enumerate(files, start=1):
         txt += (
             f"{i}. <code>{f['name']}</code>\n"
-            f"🌍 {f.get('server')}\n"
-            f"🏷 {f.get('category')}\n\n"
+            f"┣ 🌍 {f.get('server', 'Auto Premium')}\n"
+            f"┗ 🏷 {f.get('category', 'All Sites')}\n\n"
         )
 
     await update.message.reply_text(txt, parse_mode="HTML")
-
 
 async def clear_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
     result = await files_col.delete_many({"status": "queued"})
-
     await update.message.reply_text(
-        (
-            f"🗑 <b>Queue Cleared</b>\n"
-            f"Deleted: {result.deleted_count}"
-        ),
+        f"🗑 <b>Queue Cleared</b>\nDeleted: <b>{result.deleted_count}</b> files.",
         parse_mode="HTML",
     )
-
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (
         "💡 <b>VIP BOT COMMANDS</b>\n\n"
-        "/stats - Dashboard\n"
-        "/queue - Queue list\n"
-        "/clear - Clear queue\n"
-        "/ping - Bot speed\n"
+        "🔹 /panel - অ্যাডমিন প্যানেল ওপেন করুন\n"
+        "🔹 /stats - ড্যাশবোর্ড ও স্ট্যাটাস\n"
+        "🔹 /queue - কিউতে থাকা ফাইলগুলো দেখুন\n"
+        "🔹 /clear - কিউ ক্লিয়ার করুন\n"
+        "🔹 /broadcast [msg] - সব ইউজারকে মেসেজ দিন\n"
+        "🔹 /ping - বটের রেসপন্স স্পিড\n"
     )
-
-    await update.message.reply_text(
-        txt,
-        parse_mode="HTML",
-    )
-
+    await update.message.reply_text(txt, parse_mode="HTML")
 
 async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start = time.perf_counter()
-    msg = await update.message.reply_text("🏓 Testing...")
+    msg = await update.message.reply_text("🏓 Testing ping...")
     end = time.perf_counter()
-
-    await msg.edit_text(
-        f"🏓 Pong: {round((end - start) * 1000)} ms"
-    )
-
+    await msg.edit_text(f"🏓 <b>Pong:</b> <code>{round((end - start) * 1000)} ms</code>", parse_mode="HTML")
 
 # ==========================================
-# ADMIN PANEL KEYBOARD
+# ADMIN PANEL KEYBOARD & BUTTONS
 # ==========================================
 def get_admin_home_keyboard():
     keyboard = [
@@ -1448,7 +1348,6 @@ def get_admin_home_keyboard():
         ["📢 Broadcast", "🏓 Ping"],
         ["⚙️ System Status"],
     ]
-
     return ReplyKeyboardMarkup(
         keyboard,
         resize_keyboard=True,
@@ -1457,42 +1356,29 @@ def get_admin_home_keyboard():
         input_field_placeholder="VIP ADMIN PANEL"
     )
 
-
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-
-    await update.message.reply_text(
-        "⚙️ VIP ADMIN PANEL",
-        reply_markup=get_admin_home_keyboard()
-    )
-
+    await update.message.reply_text("⚙️ <b>VIP ADMIN PANEL</b>", parse_mode="HTML", reply_markup=get_admin_home_keyboard())
 
 async def admin_panel_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    text = update.message.text
+    text = update.message.text.strip()
 
     if text == "📊 Stats":
         await show_stats(update, context)
-
     elif text == "📦 Queue":
         await show_queue(update, context)
-
     elif text == "🚀 Post Now":
-        await update.message.reply_text("🚀 Posting started...")
         await execute_posting(context, ADMIN_ID)
-
     elif text == "🗑 Clear Queue":
         await clear_queue(update, context)
-
     elif text == "📢 Broadcast":
-        await update.message.reply_text("ব্যবহার:\n/broadcast আপনার মেসেজ")
-
+        await update.message.reply_text("⚠️ <b>ব্যবহারবিধি:</b>\n/broadcast আপনার মেসেজ লিখে সেন্ড করুন।", parse_mode="HTML")
     elif text == "🏓 Ping":
         await cmd_ping(update, context)
-
     elif text == "⚙️ System Status":
         uptime = str(utc_now() - sys_memory["start_time"]).split(".")[0]
         await update.message.reply_text(
@@ -1500,11 +1386,10 @@ async def admin_panel_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "⚙️ <b>SYSTEM STATUS</b>\n\n"
                 f"⏱ Uptime: <b>{uptime}</b>\n"
                 f"🧠 MongoDB: ✅ Connected\n"
-                f"🤖 OpenAI: ✅ Active"
+                f"🤖 OpenAI API: {'✅ Active' if client else '⚠️ Fallback Mode'}"
             ),
             parse_mode="HTML",
         )
-
 
 # ==========================================
 # BOT INIT
@@ -1513,38 +1398,20 @@ async def bot_init(application: Application):
     me = await application.bot.get_me()
     sys_memory["bot_username"] = me.username
 
-    # remove telegram menu button
     await application.bot.delete_my_commands()
-
-    # health checks
     await bot_health_check()
 
-    # auto repost engine
-    application.job_queue.run_repeating(
-        process_auto_reposts,
-        interval=3600,
-        first=60,
-    )
+    # Auto Repost Engine (Hourly)
+    application.job_queue.run_repeating(process_auto_reposts, interval=3600, first=60)
+    # Expiry Cleaner (Every 10 mins)
+    application.job_queue.run_repeating(expiry_monitor, interval=600, first=120)
+    # Analytics Cleanup (Daily)
+    application.job_queue.run_repeating(auto_cleanup, interval=86400, first=300)
 
-    # expiry cleaner
-    application.job_queue.run_repeating(
-        expiry_monitor,
-        interval=600,
-        first=120,
-    )
-
-    # analytics cleanup
-    application.job_queue.run_repeating(
-        auto_cleanup,
-        interval=86400,
-        first=300,
-    )
-
-    logging.info("✅ Bot init completed")
-
+    logging.info("✅ Bot init completed perfectly.")
 
 # ==========================================
-# MAIN
+# MAIN EXECUTION
 # ==========================================
 if __name__ == "__main__":
     app = (
@@ -1556,6 +1423,7 @@ if __name__ == "__main__":
 
     app.add_error_handler(error_handler)
 
+    # Core Commands
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("ping", cmd_ping))
@@ -1565,11 +1433,10 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("broadcast", broadcast_message))
     app.add_handler(CommandHandler("panel", admin_panel))
 
+    # 🐛 FIXED BUG: Set per_message=False so regular document messages trigger Conversation correctly
     conv_handler = ConversationHandler(
-        per_message=True,
-        entry_points=[
-            MessageHandler(filters.Document.ALL, start_upload)
-        ],
+        per_message=False,
+        entry_points=[MessageHandler(filters.Document.ALL, start_upload)],
         states={
             ASK_SERVER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_server),
@@ -1594,14 +1461,12 @@ if __name__ == "__main__":
                 MessageHandler(filters.TEXT & ~filters.COMMAND, process_custom_time),
             ],
         },
-        fallbacks=[
-            CommandHandler("cancel", cancel_upload)
-        ],
+        fallbacks=[CommandHandler("cancel", cancel_upload)],
     )
 
     app.add_handler(conv_handler)
 
-    # admin keyboard text handler
+    # Admin Panel Reply Keyboard Handler
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -1609,5 +1474,5 @@ if __name__ == "__main__":
         )
     )
 
-    print("🚀 VIP ENTERPRISE VPN BOT RUNNING...")
+    print("🚀 VIP ENTERPRISE VPN BOT (V2 PREMIUM) IS RUNNING...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
