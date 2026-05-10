@@ -1388,6 +1388,130 @@ async def cancel_upload(
 # ==========================================
 # SEND TO CHANNEL
 # ==========================================
+# ==========================================
+# CONFIRM ACTION
+# ==========================================
+async def handle_confirm_action(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    if query.data == "act_now":
+
+        await query.edit_message_text(
+            "🚀 Posting started..."
+        )
+
+        await execute_posting(
+            context,
+            user_id
+        )
+
+        return ConversationHandler.END
+
+    elif query.data == "act_1h":
+
+        context.job_queue.run_once(
+            scheduled_post_job,
+            3600,
+            data={
+                "user_id": user_id
+            }
+        )
+
+        await query.edit_message_text(
+            "✅ Post scheduled after 1 hour."
+        )
+
+        return ConversationHandler.END
+
+    elif query.data == "act_3h":
+
+        context.job_queue.run_once(
+            scheduled_post_job,
+            10800,
+            data={
+                "user_id": user_id
+            }
+        )
+
+        await query.edit_message_text(
+            "✅ Post scheduled after 3 hours."
+        )
+
+        return ConversationHandler.END
+
+    elif query.data == "act_custom":
+
+        await query.edit_message_text(
+            "🕒 সময় দিন (HH:MM)\n"
+            "Example: 20:30"
+        )
+
+        return ASK_CUSTOM_TIME
+
+    return ConversationHandler.END
+
+
+# ==========================================
+# CUSTOM TIME
+# ==========================================
+async def process_custom_time(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    try:
+
+        time_str = update.message.text.strip()
+
+        target_time = datetime.strptime(
+            time_str,
+            "%H:%M"
+        ).time()
+
+        now = utc_now()
+
+        target_dt = datetime.combine(
+            now.date(),
+            target_time,
+            tzinfo=timezone.utc
+        )
+
+        if target_dt <= now:
+            target_dt += timedelta(days=1)
+
+        delay = (
+            target_dt - now
+        ).total_seconds()
+
+        context.job_queue.run_once(
+            scheduled_post_job,
+            delay,
+            data={
+                "user_id": update.effective_user.id
+            }
+        )
+
+        await update.message.reply_text(
+            f"✅ Scheduled at {time_str}"
+        )
+
+    except Exception:
+
+        await update.message.reply_text(
+            "❌ Wrong format.\n"
+            "Example: 20:30"
+        )
+
+        return ASK_CUSTOM_TIME
+
+    return ConversationHandler.END
 async def send_post_to_channel(
     context,
     channel_id,
@@ -2138,7 +2262,7 @@ async def cmd_ping(
     end = time.perf_counter()
 
     await msg.edit_text(
-        f"🏓 Pong: {round((end - start) * 1000)} ms"
+        f"🏓 Response Time: {round((end - start) * 1000)} ms"
     )
 
 
