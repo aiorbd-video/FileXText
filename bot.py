@@ -165,17 +165,74 @@ async def test_openai_connection():
         logging.warning(f"⚠️ OpenAI test failed: {e}")
 
 
+# ==========================================
+# ENSURE INDEXES
+# ==========================================
 async def ensure_indexes():
-    await files_col.create_index("uid", unique=True)
-    await files_col.create_index("status")
-    await files_col.create_index("expiry_date")
-    await files_col.create_index("next_repost_date")
-    await files_col.create_index("created_at")
-    await analytics_col.create_index("created_at")
-    await users_col.create_index("_id", unique=True)
-    await stats_col.create_index("_id", unique=True)
-    logging.info("✅ Mongo indexes ensured")
 
+    try:
+
+        existing = await files_col.index_information()
+
+        # uid index fix
+        if "uid_1" in existing:
+
+            old_index = existing["uid_1"]
+
+            # যদি unique না হয়
+            if not old_index.get("unique"):
+
+                await files_col.drop_index("uid_1")
+
+                logging.info(
+                    "⚠️ Old uid index removed"
+                )
+
+        # recreate indexes
+        await files_col.create_index(
+            "uid",
+            unique=True
+        )
+
+        await files_col.create_index(
+            "status"
+        )
+
+        await files_col.create_index(
+            "expiry_date"
+        )
+
+        await files_col.create_index(
+            "next_repost_date"
+        )
+
+        await files_col.create_index(
+            "created_at"
+        )
+
+        await analytics_col.create_index(
+            "created_at"
+        )
+
+        await users_col.create_index(
+            "_id",
+            unique=True
+        )
+
+        await stats_col.create_index(
+            "_id",
+            unique=True
+        )
+
+        logging.info(
+            "✅ Mongo indexes ensured"
+        )
+
+    except Exception as e:
+
+        logging.error(
+            f"❌ Index Error: {e}"
+        )
 # ==========================================
 # ERROR HANDLER
 # ==========================================
