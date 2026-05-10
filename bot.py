@@ -176,7 +176,39 @@ async def ensure_indexes():
     await stats_col.create_index("_id", unique=True)
     logging.info("✅ Mongo indexes ensured")
 
+# ==========================================
+# ERROR HANDLER
+# ==========================================
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+) -> None:
 
+    tb_string = "".join(
+        traceback.format_exception(
+            None,
+            context.error,
+            context.error.__traceback__
+        )
+    )
+
+    logging.error(tb_string)
+
+    try:
+
+        if ADMIN_ID:
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "❌ <b>BOT ERROR</b>\n"
+                    f"<pre>{html.escape(tb_string[:3500])}</pre>"
+                ),
+                parse_mode="HTML",
+            )
+
+    except Exception:
+        pass
 # ==========================================
 # BASIC HELPERS
 # ==========================================
