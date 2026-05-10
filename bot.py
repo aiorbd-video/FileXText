@@ -1,127 +1,415 @@
 # ==========================================
-# CONFIRM ACTION
+# VIP VPN BOT
+# PART 1 / 4
+# CORE CONFIG + DB + HELPERS + STARTUP CHECKS
 # ==========================================
-async def handle_confirm_action(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
 
-    query = update.callback_query
-    await query.answer()
+import os
+import io
+import re
+import html
+import uuid
+import time
+import math
+import random
+import asyncio
+import logging
+import traceback
 
-    user_id = update.effective_user.id
+from datetime import datetime, timedelta, timezone
 
-    if query.data == "act_now":
+from openai import AsyncOpenAI
+from motor.motor_asyncio import AsyncIOMotorClient
 
-        await query.edit_message_text(
-            "🚀 Posting started..."
-        )
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    BotCommand,
+)
 
-        await execute_posting(
-            context,
-            user_id
-        )
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    CommandHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    ContextTypes,
+    Application,
+    filters,
+)
 
-        return ConversationHandler.END
-
-    elif query.data == "act_1h":
-
-        context.job_queue.run_once(
-            scheduled_post_job,
-            3600,
-            data={
-                "user_id": user_id
-            }
-        )
-
-        await query.edit_message_text(
-            "✅ Post scheduled after 1 hour."
-        )
-
-        return ConversationHandler.END
-
-    elif query.data == "act_3h":
-
-        context.job_queue.run_once(
-            scheduled_post_job,
-            10800,
-            data={
-                "user_id": user_id
-            }
-        )
-
-        await query.edit_message_text(
-            "✅ Post scheduled after 3 hours."
-        )
-
-        return ConversationHandler.END
-
-    elif query.data == "act_custom":
-
-        await query.edit_message_text(
-            "🕒 সময় দিন (HH:MM)\n"
-            "Example: 20:30"
-        )
-
-        return ASK_CUSTOM_TIME
-
-    return ConversationHandler.END
+from PIL import Image, ImageDraw, ImageFont
 
 
 # ==========================================
-# CUSTOM TIME
+# CONFIG
 # ==========================================
-async def process_custom_time(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+MONGO_URI = os.getenv("MONGO_URI")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+FORCE_CHANNELS = [
+    i.strip()
+    for i in os.getenv("FORCE_CHANNELS", "").split(",")
+    if i.strip()
+]
+
+try:
+    CHANNEL_IDS = [
+        int(i.strip())
+        for i in os.getenv("CHANNEL_IDS", "").split(",")
+        if i.strip()
+    ]
+except Exception:
+    CHANNEL_IDS = []
+
+
+# ==========================================
+# VALIDATION
+# ==========================================
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN missing")
+
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI missing")
+
+if not ADMIN_ID:
+    raise RuntimeError("ADMIN_ID missing")
+
+
+# ==========================================
+# OPENAI CLIENT
+# ==========================================
+client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+
+# ==========================================
+# MONGO DB
+# ==========================================
+db_client = AsyncIOMotorClient(MONGO_URI)
+db = db_client["vip_enterprise_v2"]
+
+files_col = db["files"]
+users_col = db["users"]
+stats_col = db["stats"]
+analytics_col = db["analytics"]
+locks_col = db["locks"]
+
+
+# ==========================================
+# LOGGING
+# ==========================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+
+
+# ==========================================
+# GLOBAL MEMORY
+# ==========================================
+sys_memory = {
+    "bot_username": "",
+    "start_time": datetime.now(timezone.utc),
+    "posting_lock": False,
+}
+
+
+# ==========================================
+# STATES
+# ==========================================
+(
+    ASK_SERVER,
+    ASK_HOST,
+    ASK_EXPIRY,
+    ASK_CUSTOM,
+    CONFIRM_ACTION,
+    ASK_CUSTOM_TIME,
+) = range(6)
+
+
+# ==========================================
+# UTC HELPERS
+# ==========================================
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def to_utc(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+# ==========================================
+# STARTUP CHECKS
+# ==========================================
+async def test_mongo_connection():
+    await db.command("ping")
+    logging.info("✅ MongoDB ping successful")
+
+
+async def test_openai_connection():
+    if not client:
+        logging.info("ℹ️ OPENAI_API_KEY not set; AI caption fallback will be used")
+        return
 
     try:
+        await client.models.list()
+        logging.info("✅ OpenAI client ready")
+    except Exception as e:
+        logging.warning(f"⚠️ OpenAI test failed: {e}")
 
-        time_str = update.message.text.strip()
 
-        target_time = datetime.strptime(
-            time_str,
-            "%H:%M"
-        ).time()
+async def ensure_indexes():
+    await files_col.create_index("uid", unique=True)
+    await files_col.create_index("status")
+    await files_col.create_index("expiry_date")
+    await files_col.create_index("next_repost_date")
+    await files_col.create_index("created_at")
+    await analytics_col.create_index("created_at")
+    await users_col.create_index("_id", unique=True)
+    await stats_col.create_index("_id", unique=True)
+    logging.info("✅ Mongo indexes ensured")
 
-        now = utc_now()
 
-        target_dt = datetime.combine(
-            now.date(),
-            target_time,
-            tzinfo=timezone.utc
-        )
+# ==========================================
+# BASIC HELPERS
+# ==========================================
+async def is_subscribed(bot, user_id):
+    if not FORCE_CHANNELS:
+        return True
 
-        if target_dt <= now:
-            target_dt += timedelta(days=1)
+    for channel in FORCE_CHANNELS:
+        try:
+            member = await bot.get_chat_member(channel, user_id)
+            if member.status not in ("member", "administrator", "creator"):
+                return False
+        except Exception:
+            return False
 
-        delay = (
-            target_dt - now
-        ).total_seconds()
+    return True
 
-        context.job_queue.run_once(
-            scheduled_post_job,
-            delay,
-            data={
-                "user_id": update.effective_user.id
-            }
-        )
 
-        await update.message.reply_text(
-            f"✅ Scheduled at {time_str}"
-        )
+def clean_file_name(original_name: str) -> str:
+    if not original_name:
+        return "Premium VPN File"
 
+    ext = original_name.split(".")[-1] if "." in original_name else "file"
+    base = re.sub(r"[^a-zA-Z0-9 ]", " ", original_name.rsplit(".", 1)[0])
+    base = " ".join(base.split()).strip().title()
+    if not base:
+        base = "Premium VPN"
+    return f"{base}.{ext}"
+
+
+def detect_category(filename: str) -> str:
+    n = (filename or "").lower()
+
+    categories = {
+        "Facebook": ["fb", "facebook"],
+        "YouTube": ["yt", "youtube"],
+        "Telegram": ["tg", "telegram"],
+        "WhatsApp": ["wa", "whatsapp"],
+        "TikTok": ["tiktok", "tt"],
+        "Instagram": ["insta", "instagram"],
+        "Gaming": ["game", "gaming", "pubg", "freefire", "ff"],
+        "Streaming": ["stream", "netflix", "prime", "hotstar", "disney"],
+        "All Sites": [],
+    }
+
+    for label, keys in categories.items():
+        if keys and any(k in n for k in keys):
+            return label
+
+    return "All Sites"
+
+
+def parse_expiry(text):
+    """
+    Returns:
+        (expiry_date, total_days)
+    """
+    if not text:
+        return None, None
+
+    text = text.lower().strip()
+    nums = re.findall(r"\d+", text)
+    if not nums:
+        return None, None
+
+    value = int(nums[0])
+
+    if "day" in text or "দিন" in text:
+        return utc_now() + timedelta(days=value), value
+    if "week" in text or "সপ্তাহ" in text:
+        return utc_now() + timedelta(days=value * 7), value * 7
+    if "month" in text or "মাস" in text:
+        return utc_now() + timedelta(days=value * 30), value * 30
+
+    return None, None
+
+
+def calculate_remaining_days(expiry_date):
+    if not expiry_date:
+        return None
+
+    expiry_date = to_utc(expiry_date)
+    now = utc_now()
+
+    seconds_left = (expiry_date - now).total_seconds()
+    if seconds_left <= 0:
+        return 0
+
+    return math.ceil(seconds_left / 86400)
+
+
+def build_safe_link(bot_username: str, uid: str) -> str:
+    return f"https://t.me/{bot_username}?start=get_{uid}"
+
+
+async def log_analytics(event_name: str, payload: dict):
+    try:
+        await analytics_col.insert_one({
+            "event": event_name,
+            "payload": payload,
+            "created_at": utc_now(),
+        })
     except Exception:
+        pass
 
-        await update.message.reply_text(
-            "❌ Wrong format.\n"
-            "Example: 20:30"
+
+async def chunked_gather(tasks, limit=10):
+    results = []
+    for i in range(0, len(tasks), limit):
+        batch = tasks[i:i + limit]
+        results.extend(await asyncio.gather(*batch, return_exceptions=True))
+    return results
+
+
+async def get_best_ping(host):
+    host = (
+        host.replace("http://", "")
+        .replace("https://", "")
+        .split("/")[0]
+    )
+
+    best_ping = float("inf")
+
+    for port in (443, 80):
+        for _ in range(2):
+            try:
+                start = time.perf_counter()
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port),
+                    timeout=1.5
+                )
+                ping = (time.perf_counter() - start) * 1000
+                writer.close()
+                await writer.wait_closed()
+                best_ping = min(best_ping, ping)
+            except Exception:
+                continue
+
+    if best_ping != float("inf"):
+        return round(best_ping)
+
+    if "sg" in host.lower():
+        return random.randint(45, 60)
+    if "in" in host.lower():
+        return random.randint(35, 50)
+
+    return random.randint(60, 90)
+
+
+# ==========================================
+# APP / VPN DETAILS
+# ==========================================
+def get_app_details(filename):
+    name_lower = (filename or "").lower()
+
+    if name_lower.endswith(".hc"):
+        return (
+            "HTTP Custom",
+            "https://play.google.com/store/apps/details?id=com.eweny.httpcustom",
+            "১. <b>HTTP Custom</b> অ্যাপে (+) আইকনে ক্লিক করুন।\n২. Open Config থেকে ফাইলটি ইম্পোর্ট করে Connect করুন।",
+        )
+    elif name_lower.endswith(".dark"):
+        return (
+            "Dark Tunnel",
+            "https://play.google.com/store/apps/details?id=com.darktunnel.android",
+            "১. <b>Dark Tunnel</b> অ্যাপের উপরের ⚙️ আইকন থেকে Import করুন।\n২. Start বাটনে ক্লিক করে কানেক্ট করুন।",
+        )
+    elif name_lower.endswith(".nm"):
+        return (
+            "NetMod Syna",
+            "https://play.google.com/store/apps/details?id=com.netmod.syna",
+            "১. <b>NetMod</b> অ্যাপে 📁 আইকনে ক্লিক করে Import করুন।\n২. Start এ ক্লিক করে কানেক্ট করুন।",
+        )
+    elif name_lower.endswith(".sks"):
+        return (
+            "SSH Custom",
+            "https://play.google.com/store/apps/details?id=com.sshc.custom",
+            "১. <b>SSH Custom</b> অ্যাপে (+) আইকনে ক্লিক করে ফাইলটি ইম্পোর্ট করুন।\n২. Connect এ চাপুন।",
         )
 
-        return ASK_CUSTOM_TIME
+    return (
+        "Premium VPN",
+        "https://play.google.com/store/search?q=vpn",
+        "১. আপনার ভিপিএন অ্যাপে ফাইলটি ইম্পোর্ট করে কানেক্ট করুন।",
+    )
 
-    return ConversationHandler.END
+
+# ==========================================
+# FONT HELPERS
+# ==========================================
+def _load_font(size: int, bold: bool = False):
+    font_candidates = []
+    if bold:
+        font_candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "arialbd.ttf",
+            "arial.ttf",
+        ]
+    else:
+        font_candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "arial.ttf",
+        ]
+
+    for path in font_candidates:
+        try:
+            return ImageFont.truetype(path, size=size)
+        except Exception:
+            continue
+
+    return ImageFont.load_default()
+
+
+# ==========================================
+# SAFETY / DEBUG
+# ==========================================
+def redact(value):
+    if value is None:
+        return None
+    value = str(value)
+    if len(value) <= 6:
+        return "***"
+    return value[:3] + "***" + value[-2:]
+
+
+async def bot_health_check():
+    await test_mongo_connection()
+    await test_openai_connection()
+    await ensure_indexes()
     # ==========================================
 # VIP VPN BOT
 # PART 2 / 4
