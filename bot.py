@@ -226,6 +226,7 @@ def detect_category(filename: str) -> str:
         "WhatsApp": ["wa", "whatsapp"],
         "TikTok": ["tiktok", "tt"],
         "Instagram": ["insta", "instagram"],
+        "IMO Calling": ["im", "imo"],
         "Gaming": ["game", "gaming", "pubg", "freefire", "ff"],
         "Streaming": ["stream", "netflix", "prime", "hotstar", "disney", "toffee"],
         "All Sites": [],
