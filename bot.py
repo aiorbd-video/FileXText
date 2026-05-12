@@ -986,17 +986,24 @@ async def send_post_to_channel(context, channel_id, caption, thumb_bytes):
 # ==========================================
 # FINAL CAPTION
 # ==========================================
+# ==========================================
+# FINAL CAPTION (UPDATED FOR WEBSITE REDIRECTION)
+# ==========================================
 async def build_final_caption(context, file_info):
     caption = await generate_ai_caption(file_info)
     
-    # 🐛 100% BULLETPROOF: মেমোরির ভরসায় না থেকে সরাসরি context থেকে আসল ইউজারনেম নেওয়া
-    username = context.bot.username.replace("@", "").strip()
-    url = f"https://t.me/{username}?start=get_{file_info['uid']}"
+    # ⚠️ এখানে আপনার Vercel-এ লাইভ হওয়া ওয়েবসাইটের আসল লিংকটি বসাবেন (শেষে / দিবেন না)
+    WEBSITE_DOMAIN = "https://vipvpnweb.vercel.app" 
+    
+    # ইউজারকে সরাসরি ওয়েবসাইটের কনফিগ পেজে পাঠানোর লিংক
+    url = f"{WEBSITE_DOMAIN}/config/{file_info['uid']}"
 
     return (
         f"{caption}\n"
-        f"🔗 <a href='{url}'><b>📥 ফাইলটি ডাউনলোড করুন (Download)</b></a>"
+        f"🌐 <b>ফাইলটি ডাউনলোড করতে নিচের লিংকে ক্লিক করুন:</b>\n"
+        f"🔗 <a href='{url}'><b>📥 Download from Website</b></a>"
     )
+
 
 # ==========================================
 # POST SINGLE FILE
