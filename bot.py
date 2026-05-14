@@ -583,7 +583,6 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         upsert=True
     )
 
-
     # Force Subscription Check
     if not await is_subscribed(context.bot, user.id):
         buttons = []
@@ -616,7 +615,8 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ <b>ফাইলটি পাওয়া যায়নি অথবা মেয়াদ শেষ হয়ে গেছে!</b>", parse_mode="HTML")
             return
 
-        await files_col.update_one({"uid": uid}, {"$inc": {"downloads": 1}})
+        # 📊 রিয়েল ডাটা কাউন্টের জন্য 'download_count' আপডেট করা হলো 📊
+        await files_col.update_one({"uid": uid}, {"$inc": {"download_count": 1}})
         await log_analytics("file_downloaded", {"uid": uid, "user_id": user.id})
 
         app_name, play_store_link, setup_instructions = get_app_details(file_doc["name"])
@@ -632,7 +632,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔗 <a href='{play_store_link}'><b>Google Play Store</b></a>\n\n"
             f"📺 <b>আমাদের ইউটিউব চ্যানেল সাবস্ক্রাইব করুন:</b>\n"
             f"👉 <a href='{YOUTUBE_CHANNEL}'><b>It's Me Ratul FTI</b></a>\n\n"
-            f"⏳ <i>নোট: নিরাপত্তার স্বার্থে এই ফাইলটি ঠিক ৩০ মিনিট পর স্বয়ংক্রিয়ভাবে ডিলিট হয়ে যাবে।</i>"
+            f"⏳ <i>নোট: নিরাপত্তার স্বার্থে এই ফাইলটি ঠিক ৩০ মিনিট পর স্বয়ংক্রিয়ভাবে ডিলিট হয়ে যাবে। <br> More Config visit : vipvpnweb.vercel.app</i>"
         )
 
         sent_msg = await context.bot.send_document(
@@ -659,6 +659,7 @@ async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
         disable_web_page_preview=True
     )
+
 
 # ==========================================
 # ADMIN UPLOAD FLOW KEYBOARDS
