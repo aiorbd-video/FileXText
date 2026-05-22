@@ -433,9 +433,12 @@ async def generate_ai_caption(file_info):
         sim_name = "Robi/Airtel"
     elif re.search(r'\b(ryze)\b', clean_name):
         sim_name = "Ryze"
-
+   elif re.search(r'\b(airtel)\b', clean_name):
+        sim_name = "Airtel"
+  elif re.search(r'\b(robi)\b', clean_name):
+        sim_name = "Robi"
     if sim_name:
-        intro = f"{main_emoji} <b>{sim_name} এর {platform_label} নতুন প্রিমিয়াম কনফিগ।</b>"
+        intro = f"{main_emoji} <b>{sim_name} সিম এর {platform_label} বাই পাস নতুন প্রিমিয়াম কনফিগ।</b>"
 
     if not intro and client:
         ai_prompt = (
@@ -577,18 +580,18 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # ==========================================
 
 SERVER_LIST = [
-    ("🇸🇬 Singapore", "sg"),
-    ("🇮🇳 India", "in"),
-    ("🇧🇩 Bangladesh", "bd"),
-    ("🇩🇪 Germany", "de"),
-    ("🇺🇸 USA", "us"),
-    ("🇬🇧 United Kingdom", "uk"),
-    ("🇨🇦 Canada", "ca"),
-    ("🇫🇷 France", "fr"),
-    ("🇳🇱 Netherlands", "nl"),
-    ("🇦🇪 UAE", "ae"),
-    ("🇯🇵 Japan", "jp"),
-    ("🇰🇷 Korea", "kr"),
+    ("🇸🇬 Singapore", "Singapore"),
+    ("🇮🇳 India", "India"),
+    ("🇧🇩 Bangladesh", "Bangladesh"),
+    ("🇩🇪 Germany", "Germany"),
+    ("🇺🇸 USA", "United States"),
+    ("🇬🇧 United Kingdom", "United Kingdom"),
+    ("🇨🇦 Canada", "Canada"),
+    ("🇫🇷 France", "France"),
+    ("🇳🇱 Netherlands", "Netherlands"),
+    ("🇦🇪 UAE", "United Arab Emirates"),
+    ("🇯🇵 Japan", "Japan"),
+    ("🇰🇷 Korea", "Korea"),
 ]
 
 # ==========================================
