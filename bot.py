@@ -362,6 +362,7 @@ async def get_best_ping(host):
     return random.randint(60, 90)
 
 
+
 # ==========================================
 # AI CAPTION ENGINE
 # ==========================================
@@ -425,7 +426,7 @@ async def generate_ai_caption(file_info):
 
     admin_note = file_info.get("custom_msg")
 
-            clean_name = filename_lower.replace("_", " ").replace("-", " ")
+    clean_name = filename_lower.replace("_", " ").replace("-", " ")
     intro, sim_name = None, None
 
     if re.search(r'\b(bl|banglalink)\b', clean_name):
@@ -504,8 +505,7 @@ async def generate_ai_caption(file_info):
         f"{random_cta}\n\n"
         f"📺 <b>Subscribe Our YouTube Channel:</b>\n"
         f"👉 <a href='{YOUTUBE_CHANNEL}'><b>It's Me Ratul</b></a>\n"
-)
-
+    )
 # ==========================================
 # STARTUP HEALTH CHECK + MIGRATION
 # ==========================================
