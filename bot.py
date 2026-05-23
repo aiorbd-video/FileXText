@@ -425,10 +425,9 @@ async def generate_ai_caption(file_info):
 
     admin_note = file_info.get("custom_msg")
 
-        clean_name = filename_lower.replace("_", " ").replace("-", " ")
+            clean_name = filename_lower.replace("_", " ").replace("-", " ")
     intro, sim_name = None, None
 
-    # সঠিক ইনডেন্টেশন সহ চেক করুন
     if re.search(r'\b(bl|banglalink)\b', clean_name):
         sim_name = "Banglalink"
     elif re.search(r'\b(robi|airtel|robi airtel)\b', clean_name):
@@ -439,7 +438,7 @@ async def generate_ai_caption(file_info):
         sim_name = "Airtel"
     elif re.search(r'\b(robi)\b', clean_name):
         sim_name = "Robi"
-    
+
     if sim_name:
         intro = f"{main_emoji} <b>{sim_name} সিম এর {platform_label} বাই পাস নতুন প্রিমিয়াম কনফিগ।</b>"
 
