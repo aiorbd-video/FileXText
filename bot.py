@@ -1720,6 +1720,7 @@ async def post_single_file(
                 result.message_id,
             ])
 
+        # 🌟 এখানে ডাটাবেস আপডেট করার সময় title সেভ করা হচ্ছে 🌟
         update_payload = {
 
             "posted_msgs": posted_records,
@@ -1733,6 +1734,8 @@ async def post_single_file(
 
             "last_post_failed":
                 len(failed_channels),
+            
+            "title": caption, # 🌟 এই নতুন লাইনটি যুক্ত করা হয়েছে 🌟
         }
 
         if repost_mode:
