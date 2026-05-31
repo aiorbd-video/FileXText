@@ -1566,7 +1566,7 @@ async def reset_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ এরর: {str(e)}")
 
 # ==========================================
-# 📊 ADMIN HOME KEYBOARD
+# 📊 ADMIN HOME KEYBOARD (UPDATED V4)
 # ==========================================
 
 def get_admin_home_keyboard():
@@ -1590,6 +1590,10 @@ def get_admin_home_keyboard():
 
         [
             "⚙ System Status"
+        ],
+        
+        [
+            "🗑️ Reset Database"  # 🌟 নতুন যুক্ত করা বাটন 🌟
         ],
     ]
 
