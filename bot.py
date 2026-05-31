@@ -2745,7 +2745,7 @@ async def bot_init(
     await bot_health_check()
     
 # ==========================================
-# 🎛️ DB RESET CALLBACK HANDLER
+# 🎛️ DB RESET CALLBACK HANDLER (BUG FIXED)
 # ==========================================
 async def db_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2753,16 +2753,25 @@ async def db_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "db_reset_confirm":
         try:
-            # files কালেকশন সম্পূর্ণ খালি করা হচ্ছে
+            # ১. files কালেকশন সম্পূর্ণ খালি করা হচ্ছে
             result = await files_col.delete_many({})
             
-            # অটো-ডিলিট ট্র্যাকার কালেকশন থাকলে তাও খালি করবে
+            # ২. অটো-ডিলিট ট্র্যাকার কালেকশন থাকলে তাও খালি করবে
             if "auto_delete" in await db.list_collection_names():
                 await db["auto_delete"].delete_many({})
 
+            # 🌟 ৩. Job Queue রিসেট (এরর ফিক্সড - context.application ব্যবহার করা হয়েছে)
+            # যদি আপনি ডাটাবেস রিসেটের সাথে সাথে রানিং কোনো শিডিউলড পোস্ট জব বন্ধ করতে চান:
+            current_jobs = context.application.job_queue.jobs()
+            for job in current_jobs:
+                # আপনার অটো-পোস্ট জবের নির্দিষ্ট নাম থাকলে সেটি ধরে রিমুভ করতে পারেন
+                if job.name in ["auto_post_job", "repost_job"]: 
+                    job.schedule_removal()
+
             await query.edit_message_text(
                 f"💥 <b>Database Reset Successful!</b>\n\n"
-                f"🗑️ মোট <b>{result.deleted_count}টি</b> কনфিগ ফাইল ডাটাবেস থেকে চিরতরে মুছে ফেলা হয়েছে।",
+                f"🗑️ মোট <b>{result.deleted_count}টি</b> কনফিগ ফাইল ডাটাবেস থেকে চিরতরে মুছে ফেলা হয়েছে।\n"
+                f"⏱️ অ্যাক্টিভ জব কিউ রিবুট করা হয়েছে।",
                 parse_mode="HTML"
             )
         except Exception as e:
