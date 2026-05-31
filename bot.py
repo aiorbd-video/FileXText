@@ -1538,6 +1538,32 @@ async def cancel_upload(
         )
 
     return ConversationHandler.END
+# ==========================================
+# 🗑 DATABASE RESET COMMAND (ADMIN ONLY)
+# ==========================================
+async def reset_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # শুধুমাত্র আপনি (ADMIN) যাতে এটি করতে পারেন
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ আপনি এই কমান্ডটি ব্যবহার করতে পারবেন না।")
+        return
+
+    try:
+        # files_col এর সব ডাটা ডিলিট করা হচ্ছে
+        result = await files_col.delete_many({})
+        
+        # যদি আপনার বটের অটো-ডিলিট কালেকশনও খালি করতে চান:
+        if "auto_delete" in db.list_collection_names():
+            await db["auto_delete"].delete_many({})
+
+        await update.message.reply_text(
+            f"✅ <b>File Database Reset Successfully!</b>\n\n"
+            f"🗑 মোট <b>{result.deleted_count}টি</b> ফাইল ডাটাবেস থেকে মুছে ফেলা হয়েছে।",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ এরর: {str(e)}")
 
 # ==========================================
 # 📊 ADMIN HOME KEYBOARD
@@ -2601,7 +2627,7 @@ async def broadcast_message(
     )
 
 # ==========================================
-# ⚙ ADMIN PANEL BUTTONS
+# ⚙ ADMIN PANEL BUTTONS (UPDATED V4)
 # ==========================================
 
 async def admin_panel_buttons(
@@ -2654,6 +2680,25 @@ async def admin_panel_buttons(
             context
         )
 
+    # 🌟 নতুন যুক্ত করা ডাটাবেস রিসেট বাটন লজিক 🌟
+    elif text == "🗑️ Reset Database":
+
+        confirm_keyboard = [
+            [
+                InlineKeyboardButton("✅ Yes, Delete All", callback_data="db_reset_confirm"),
+                InlineKeyboardButton("❌ No, Cancel", callback_data="db_reset_cancel")
+            ]
+        ]
+        
+        await update.message.reply_text(
+            "⚠️ <b>সতর্কতা!</b>\n\n"
+            "আপনি কি নিশ্চিত যে আপনি ডাটাবেসের <b>সব ফাইল মুছে ফেলতে চান?</b>\n"
+            "এটি করলে ওয়েবসাইট এবং বট থেকে সব কনফিগ একবারে ডিলিট হয়ে যাবে!",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(confirm_keyboard)
+        )
+        return
+
     elif text == "⚙ System Status":
 
         uptime = str(
@@ -2694,6 +2739,33 @@ async def bot_init(
     await application.bot.delete_my_commands()
 
     await bot_health_check()
+    
+# ==========================================
+# 🎛️ DB RESET CALLBACK HANDLER
+# ==========================================
+async def db_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "db_reset_confirm":
+        try:
+            # files কালেকশন সম্পূর্ণ খালি করা হচ্ছে
+            result = await files_col.delete_many({})
+            
+            # অটো-ডিলিট ট্র্যাকার কালেকশন থাকলে তাও খালি করবে
+            if "auto_delete" in await db.list_collection_names():
+                await db["auto_delete"].delete_many({})
+
+            await query.edit_message_text(
+                f"💥 <b>Database Reset Successful!</b>\n\n"
+                f"🗑️ মোট <b>{result.deleted_count}টি</b> কনфিগ ফাইল ডাটাবেস থেকে চিরতরে মুছে ফেলা হয়েছে।",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            await query.edit_message_text(f"❌ এরর: {str(e)}")
+            
+    elif query.data == "db_reset_cancel":
+        await query.edit_message_text("❌ <b>ডাটাবেস রিসেট বাতিল করা হয়েছে।</b> আপনার ফাইলগুলো নিরাপদ আছে।", parse_mode="HTML")
 
     # ==========================================
     # AUTO REPOST CHECK
@@ -2885,24 +2957,24 @@ if __name__ == "__main__":
 
     app.add_handler(conv_handler)
 
-        
     # ==========================================
-    # ADMIN BUTTON HANDLER
+    # ADMIN BUTTON & COMMAND HANDLERS
     # ==========================================
 
+    # 🗑 ডাটাবেস রিসেট করার অ্যাডমিন কমান্ড হ্যান্ডলার
+        # 🌟 এই নতুন হ্যান্ডলারটি এখানে বসিয়ে দিন 🌟
     app.add_handler(
+        CallbackQueryHandler(db_reset_callback, pattern="^db_reset_")
+    )
 
+    # সাধারণ টেক্সট বা অ্যাডমিন প্যানেল বাটনের হ্যান্ডলার (এটি আপনার অলরেডি আছে)
+    app.add_handler(
         MessageHandler(
-            filters.TEXT &
-            ~filters.COMMAND,
+            filters.TEXT & ~filters.COMMAND,
             admin_panel_buttons
         )
     )
 
-    print(
-        "🚀 VIP ENTERPRISE VPN BOT V4 STARTED"
-    )
+    print("🚀 VIP ENTERPRISE VPN BOT V4 STARTED")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES
-    )
