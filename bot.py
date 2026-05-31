@@ -125,9 +125,10 @@ sys_memory = {
     ASK_HOST,
     ASK_EXPIRY,
     ASK_CUSTOM,
+    ASK_POST_TYPE,
     CONFIRM_ACTION,
     ASK_CUSTOM_TIME,
-) = range(6)
+) = range(7)
 
 # ==========================================
 # TIME HELPERS
@@ -1069,39 +1070,103 @@ async def process_expiry(
     return ASK_CUSTOM
 
 # ==========================================
-# 💬 PROCESS CUSTOM MESSAGE
+# 💬 PROCESS CUSTOM MESSAGE -> ASK POST TYPE
 # ==========================================
-
 async def process_custom_msg(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     custom_msg = None
-
     if update.callback_query:
-
         query = update.callback_query
-
         await query.answer()
-
-        await query.edit_message_text(
-            "💬 Message Skipped",
-            parse_mode="HTML",
-        )
-
+        await query.edit_message_text("💬 Message Skipped", parse_mode="HTML")
     else:
-
         if not update.message:
             return ASK_CUSTOM
+        custom_msg = update.message.text.strip()
 
-        custom_msg = (
-            update.message.text.strip()
-        )
+    context.user_data["temp"]["custom_msg"] = custom_msg
 
+    # 🌟 পোস্ট টাইপ সিলেক্ট করার জন্য কিবোর্ড দেখানো হচ্ছে
+    keyboard = [
+        [
+            InlineKeyboardButton("📂 Direct File + Link", callback_data="ptype_file"),
+            InlineKeyboardButton("🔗 Link Only", callback_data="ptype_link")
+        ],
+        [InlineKeyboardButton("❌ Cancel", callback_data="nav_cancel")]
+    ]
+
+    await context.bot.send_message(
+        chat_id=update.effective_user.id,
+        text="📢 <b>চ্যানেলে কীভাবে পোস্ট করতে চান সিলেক্ট করুন:</b>\n\n"
+             "১. <b>Direct File:</b> সরাসরি মূল ফাইলটি চ্যানেলে আপলোড হবে।\n"
+             "২. <b>Link Only:</b> শুধু ক্যাপশন ও ওয়েবসাইটের লিংক পোস্ট হবে।",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return ASK_POST_TYPE
+
+    # ==========================================
+# 📢 PROCESS POST TYPE -> SAVE TO DB & SHOW SUMMARY
+# ==========================================
+async def process_post_type(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    post_type = query.data.replace("ptype_", "") # 'file' অথবা 'link'
     temp = context.user_data["temp"]
+    temp["post_type"] = post_type # ডাটাবেসের জন্য সেভ হলো
 
-    temp["custom_msg"] = custom_msg
+    # PING TEST
+    if temp.get("host"):
+        try:
+            temp["ping"] = await get_best_ping(temp["host"])
+        except Exception:
+            temp["ping"] = None
+
+    # AUTO REPOST VERSION
+    total_days = temp.get("total_days")
+    if total_days and total_days > 1:
+        temp["repost_versions"] = [
+            {"day_left": d, "posted": False, "posted_at": None}
+            for d in range(total_days - 1, 0, -1)
+        ]
+
+    # SAVE TO DATABASE
+    await files_col.insert_one(temp)
+
+    queue_count = await files_col.count_documents({"status": "queued"})
+    ping_text = f"{temp['ping']} ms" if temp.get('ping') else "Protected"
+    ptype_text = "📂 Direct File + Link" if post_type == "file" else "🔗 Link Only"
+
+    summary = (
+        "✅ <b>CONFIG ADDED TO QUEUE</b>\n\n"
+        f"📄 <code>{temp['name']}</code>\n"
+        f"📢 Post Mode: <b>{ptype_text}</b>\n" # নতুন লাইন
+        f"🌍 Server: <b>{temp.get('server') or 'Auto Premium'}</b>\n"
+        f"⏳ Expiry: <b>{temp.get('expiry_raw') or 'Unlimited'}</b>\n"
+        f"⚡ Ping: <b>{ping_text}</b>\n"
+        f"♻ Auto Reposts: <b>{len(temp.get('repost_versions', []))}</b>\n\n"
+        f"📦 Queue Size: <b>{queue_count}</b>"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🚀 POST NOW", callback_data="act_now")],
+        [InlineKeyboardButton("⏳ 1 Hour", callback_data="act_1h"), InlineKeyboardButton("⏳ 3 Hours", callback_data="act_3h")],
+        [InlineKeyboardButton("🕒 Custom Time", callback_data="act_custom")],
+        [InlineKeyboardButton("🗑 Clear Queue", callback_data="act_clear")]
+    ]
+
+    await query.edit_message_text(
+        text=summary,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return CONFIRM_ACTION
 
     # ==========================================
     # PING TEST
@@ -1658,153 +1723,101 @@ async def send_post_to_channel(
     )
 
 # ==========================================
-# 🚀 POST SINGLE FILE
+# 🚀 POST SINGLE FILE (DYNAMIC MODE FIXED)
 # ==========================================
-
 async def post_single_file(
     context,
     file_doc,
     repost_mode=False,
 ):
-
     try:
-
         working_doc = dict(file_doc)
-
-        caption = await build_final_caption(
-            working_doc
-        )
+        caption = await build_final_caption(working_doc)
+        
+        # ডাটাবেস থেকে পোস্ট টাইপ চেক করা হচ্ছে (ডিফল্ট লিংক থাকবে যদি পুরোনো ফাইল হয়)
+        post_type = working_doc.get("post_type", "link") 
+        file_id = working_doc["id"]
 
         tasks = []
-
         for channel_id in CHANNEL_IDS:
-
-            tasks.append(
-                send_post_to_channel(
-                    context,
-                    channel_id,
-                    caption
+            if post_type == "file":
+                # 📂 সরাসরি ফাইল সহ পোস্ট করার টাস্ক
+                tasks.append(
+                    context.bot.send_document(
+                        chat_id=channel_id,
+                        document=file_id,
+                        caption=caption,
+                        parse_mode="HTML",
+                    )
                 )
-            )
+            else:
+                # 🔗 শুধু লিংক ও ক্যাপশন পোস্ট করার টাস্ক (আগের মতো)
+                tasks.append(
+                    context.bot.send_message(
+                        chat_id=channel_id,
+                        text=caption,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                )
 
-        results = await asyncio.gather(
-            *tasks,
-            return_exceptions=True
-        )
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         success_channels = []
         failed_channels = []
         posted_records = []
 
         for idx, result in enumerate(results):
-
             if idx >= len(CHANNEL_IDS):
                 continue
-
             channel_id = CHANNEL_IDS[idx]
-
             if isinstance(result, Exception):
-
-                failed_channels.append(
-                    str(channel_id)
-                )
-
+                failed_channels.append(str(channel_id))
                 continue
 
             success_channels.append(
                 str(channel_id)
             )
-
             posted_records.append([
                 channel_id,
                 result.message_id,
             ])
 
-        # 🌟 এখানে ডাটাবেস আপডেট করার সময় title সেভ করা হচ্ছে 🌟
         update_payload = {
-
             "posted_msgs": posted_records,
-
             "posted_at": utc_now(),
-
             "status": "posted",
-
-            "last_post_success":
-                len(success_channels),
-
-            "last_post_failed":
-                len(failed_channels),
-            
-            "title": caption, # 🌟 এই নতুন লাইনটি যুক্ত করা হয়েছে 🌟
+            "last_post_success": len(success_channels),
+            "last_post_failed": len(failed_channels),
+            "title": caption,
         }
 
         if repost_mode:
+            update_payload["last_repost_at"] = utc_now()
 
-            update_payload[
-                "last_repost_at"
-            ] = utc_now()
-
-        await files_col.update_one(
-
-            {
-                "uid": file_doc["uid"]
-            },
-
-            {
-                "$set": update_payload
-            }
-        )
-
-        await log_analytics(
-
-            "post_created",
-
-            {
-                "uid": file_doc["uid"],
-                "repost_mode": repost_mode,
-            }
-        )
+        await files_col.update_one({"uid": file_doc["uid"]}, {"$set": update_payload})
+        await log_analytics("post_created", {"uid": file_doc["uid"], "repost_mode": repost_mode})
 
         report = (
-
             "📡 <b>POST REPORT</b>\n"
             "━━━━━━━━━━━━━━\n\n"
-
             f"📄 <code>{file_doc['name']}</code>\n"
-
-            f"✅ Success: "
-            f"<b>{len(success_channels)}</b>\n"
-
-            f"❌ Failed: "
-            f"<b>{len(failed_channels)}</b>"
+            f"📢 Mode: <b>{'Direct File' if post_type == 'file' else 'Link Only'}</b>\n"
+            f"✅ Success: <b>{len(success_channels)}</b>\n"
+            f"❌ Failed: <b>{len(failed_channels)}</b>"
         )
 
-        await context.bot.send_message(
-
-            chat_id=ADMIN_ID,
-
-            text=report,
-
-            parse_mode="HTML",
-        )
-
+        await context.bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="HTML")
         return True
 
     except Exception as e:
-
         await context.bot.send_message(
-
             chat_id=ADMIN_ID,
-
-            text=(
-                "❌ <b>POST ERROR</b>\n\n"
-                f"<pre>{html.escape(str(e))}</pre>"
-            ),
-
+            text=f"❌ <b>POST ERROR</b>\n\n<pre>{html.escape(str(e))}</pre>",
             parse_mode="HTML",
         )
-
         return False
+
 
 # ==========================================
 # 🚀 EXECUTE POSTING
@@ -2783,7 +2796,7 @@ if __name__ == "__main__":
     )
 
     # ==========================================
-    # CONVERSATION HANDLER
+    # CONVERSATION HANDLER (UPDATED V4)
     # ==========================================
 
     conv_handler = ConversationHandler(
@@ -2791,7 +2804,6 @@ if __name__ == "__main__":
         per_message=False,
 
         entry_points=[
-
             MessageHandler(
                 filters.Document.ALL,
                 start_upload
@@ -2801,7 +2813,6 @@ if __name__ == "__main__":
         states={
 
             ASK_SERVER: [
-
                 CallbackQueryHandler(
                     process_server,
                     pattern="^srv_"
@@ -2809,13 +2820,10 @@ if __name__ == "__main__":
             ],
 
             ASK_HOST: [
-
                 MessageHandler(
-                    filters.TEXT &
-                    ~filters.COMMAND,
+                    filters.TEXT & ~filters.COMMAND,
                     process_host
                 ),
-
                 CallbackQueryHandler(
                     process_host,
                     pattern="^skip_host$"
@@ -2823,7 +2831,6 @@ if __name__ == "__main__":
             ],
 
             ASK_EXPIRY: [
-
                 CallbackQueryHandler(
                     process_expiry,
                     pattern="^exp_"
@@ -2831,21 +2838,25 @@ if __name__ == "__main__":
             ],
 
             ASK_CUSTOM: [
-
                 MessageHandler(
-                    filters.TEXT &
-                    ~filters.COMMAND,
+                    filters.TEXT & ~filters.COMMAND,
                     process_custom_msg
                 ),
-
                 CallbackQueryHandler(
                     process_custom_msg,
                     pattern="^skip_custom$"
                 ),
             ],
 
-            CONFIRM_ACTION: [
+            # 🌟 নতুন যুক্ত করা পোস্ট টাইপ স্টেট 🌟
+            ASK_POST_TYPE: [
+                CallbackQueryHandler(
+                    process_post_type,
+                    pattern="^ptype_"
+                )
+            ],
 
+            CONFIRM_ACTION: [
                 CallbackQueryHandler(
                     handle_confirm_action,
                     pattern="^act_"
@@ -2853,22 +2864,18 @@ if __name__ == "__main__":
             ],
 
             ASK_CUSTOM_TIME: [
-
                 MessageHandler(
-                    filters.TEXT &
-                    ~filters.COMMAND,
+                    filters.TEXT & ~filters.COMMAND,
                     process_custom_time
                 )
             ],
         },
 
         fallbacks=[
-
             CommandHandler(
                 "cancel",
                 cancel_upload
             ),
-
             CallbackQueryHandler(
                 cancel_upload,
                 pattern="^nav_cancel$"
@@ -2878,6 +2885,7 @@ if __name__ == "__main__":
 
     app.add_handler(conv_handler)
 
+        
     # ==========================================
     # ADMIN BUTTON HANDLER
     # ==========================================
