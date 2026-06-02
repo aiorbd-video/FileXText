@@ -511,7 +511,7 @@ async def generate_ai_caption(file_info):
     )
 
 # ==========================================
-# STARTUP HEALTH CHECK + MIGRATION
+# STARTUP HEALTH CHECK + MIGRATION (UPDATED FOR INDEX CONFLICT)
 # ==========================================
 async def bot_health_check():
     try:
@@ -532,8 +532,19 @@ async def bot_health_check():
     try:
         await files_col.create_index("uid", unique=True)
         await files_col.create_index("status")
-        # 🌟 TTL Index: ডাটাবেস নিজেই মেয়াদ উত্তীর্ণ ফাইল মুছে ফেলবে
-        await files_col.create_index("expiry_date", expireAfterSeconds=0)
+        
+        # 🌟 বাগ ফিক্স: পুরোনো ইনডেক্স থাকলে সেটি ডিলিট করে নতুন TTL ইনডেক্স বসাবে 🌟
+        try:
+            await files_col.create_index("expiry_date", expireAfterSeconds=0)
+        except Exception as index_err:
+            if 'IndexOptionsConflict' in str(index_err) or '85' in str(index_err):
+                logger.warning("⚠️ Old expiry_date index found. Dropping and recreating TTL index...")
+                await files_col.drop_index("expiry_date_1") # পুরোনোটা ডিলিট
+                await files_col.create_index("expiry_date", expireAfterSeconds=0) # নতুনটা তৈরি
+                logger.info("✅ TTL index recreated successfully!")
+            else:
+                raise index_err
+
         await files_col.create_index([("status", 1), ("created_at", -1)])
         await users_col.create_index("last_active")
         await analytics_col.create_index("created_at")
