@@ -403,10 +403,9 @@ async def cancel_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ <b>Upload Cancelled.</b>", parse_mode="HTML")
     return ConversationHandler.END
-
 # ==========================================
 # VIP ENTERPRISE VPN BOT (V4 ULTRA EXTREME)
-# PART 3 / 3 - POST ENGINE, AUTO REPOST & MAIN APP
+# PART 3 / 3 - POST ENGINE, AUTO REPOST & MAIN APP (FULL)
 # ==========================================
 
 # ==========================================
@@ -497,17 +496,15 @@ async def process_auto_reposts(context):
     if not await acquire_posting_lock(): return
     try:
         now = utc_now()
-        # যে ফাইলগুলোতে রিপোস্ট ভার্সন আছে সেগুলো খুঁজবে
         candidates = await files_col.find({"status": "posted", "repost_versions": {"$exists": True, "$not": {"$size": 0}}}).to_list(length=None)
         
         for doc in candidates:
             days_left = calculate_remaining_days(doc.get("expiry_date"))
-            if days_left <= 0: continue # মেয়াদ শেষ হলে আর পোস্ট করবে না (MongoDB নিজেই ডিলিট করবে)
+            if days_left <= 0: continue # মেয়াদ শেষ হলে আর পোস্ট করবে না
 
             versions = doc.get("repost_versions", [])
             target_idx = -1
             
-            # খুঁজে বের করা যে কোন দিনের রিপোস্টটি এখনো বাকি আছে
             for i, ver in enumerate(versions):
                 if not ver.get("posted") and ver.get("day_left", 0) >= days_left:
                     target_idx = i
@@ -521,6 +518,50 @@ async def process_auto_reposts(context):
                     logger.info(f"♻ Auto Reposted: {doc['name']} (Days Left: {days_left})")
     finally:
         release_posting_lock()
+
+# ==========================================
+# 📊 STATS & ADMIN PANEL (FIXED)
+# ==========================================
+async def show_stats(update, context):
+    if not update.effective_user or not is_admin(update.effective_user.id): return
+    
+    stats = await stats_col.find_one({"_id": "global_stats"}) or {}
+    users = await users_col.count_documents({})
+    queue = await files_col.count_documents({"status": "queued"})
+    posted = await files_col.count_documents({"status": "posted"})
+    
+    try:
+        import psutil
+        system = {
+            "cpu": psutil.cpu_percent(interval=None),
+            "ram": psutil.virtual_memory().percent,
+            "disk": psutil.disk_usage("/").percent,
+        }
+    except Exception:
+        system = {"cpu": 0, "ram": 0, "disk": 0}
+        
+    uptime = str(utc_now() - sys_memory["start_time"]).split(".")[0]
+    text = (
+        "📊 <b>VIP DASHBOARD EXTREME</b>\n"
+        "━━━━━━━━━━━━━━\n\n"
+        f"👥 Users: <b>{users}</b>\n"
+        f"📦 Queue: <b>{queue}</b>\n"
+        f"🚀 Posted: <b>{posted}</b>\n"
+        f"📈 Total Posts: <b>{stats.get('total', 0)}</b>\n\n"
+        f"🧠 CPU: <b>{system['cpu']}%</b>\n"
+        f"💾 RAM: <b>{system['ram']}%</b>\n"
+        f"💿 DISK: <b>{system['disk']}%</b>\n\n"
+        f"⏱ Uptime: <b>{uptime}</b>"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not is_admin(update.effective_user.id): return
+    await update.message.reply_text(
+        "⚙ <b>VIP ADMIN PANEL V4</b>\n\n🚀 Ultra Premium Control Center",
+        parse_mode="HTML",
+        reply_markup=get_admin_home_keyboard(),
+    )
 
 # ==========================================
 # 🗑 ADMIN BUTTONS & DB RESET HANDLER
@@ -634,4 +675,3 @@ if __name__ == "__main__":
 
     logger.info("🚀 VIP ENTERPRISE VPN BOT V4 EXTREME STARTED")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-
