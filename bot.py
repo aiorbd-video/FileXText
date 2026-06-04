@@ -2768,18 +2768,83 @@ async def bot_init(
         first=60,
     )
 
-    # ==========================================
-    # EXPIRY MONITOR
-    # ==========================================
+# ==========================================
+# ⏳ EXPIRY CLEANUP & WEBSITE SYNC
+# ==========================================
 
-    application.job_queue.run_repeating(
+async def expiry_monitor(
+    context
+):
 
-        expiry_monitor,
+    now = utc_now()
 
-        interval=600,
+    # ১. FORCE DELETE EXPIRED FILES (পুরোনো ফাইল ডিলিট করার জন্য)
+    expired = await files_col.find({
 
-        first=120,
-    )
+        "expiry_date": {
+            "$lte": now
+        }
+
+    }).to_list(length=None)
+
+    for file_doc in expired:
+
+        try:
+
+            report = (
+
+                "📊 <b>EXPIRY REPORT</b>\n"
+                "━━━━━━━━━━━━━━\n\n"
+
+                f"📄 <code>{file_doc['name']}</code>\n"
+
+                f"👥 Downloads: "
+                f"<b>{file_doc.get('downloads', 0)}</b>\n\n"
+
+                "🗑 Removed From Database & Website"
+            )
+
+            await context.bot.send_message(
+
+                chat_id=ADMIN_ID,
+
+                text=report,
+
+                parse_mode="HTML",
+            )
+
+            # ওয়েবসাইট থেকে সরানোর জন্য ফোর্স ডাটাবেস ডিলিট
+            await files_col.delete_one({
+                "uid": file_doc["uid"]
+            })
+
+            await log_analytics(
+                "expired_deleted",
+                {
+                    "uid": file_doc["uid"]
+                }
+            )
+
+        except Exception:
+            pass
+
+    # ২. LIVE UPDATE REMAINING DAYS FOR WEBSITE (সাইটে দিন কমানোর ম্যাজিক)
+    active_files = await files_col.find({
+        "expiry_date": {
+            "$gt": now
+        }
+    }).to_list(length=None)
+
+    for doc in active_files:
+        days_left = calculate_remaining_days(doc.get("expiry_date"))
+        
+        if days_left is not None:
+            
+            # ডাটাবেসে ওয়েবসাইটের জন্য লেখাটি আপডেট করে দেওয়া হচ্ছে
+            await files_col.update_one(
+                {"uid": doc["uid"]},
+                {"$set": {"remaining_text": f"{days_left} Days"}}
+            )
 
 # ==========================================
 # 🚀 MAIN RUNNER
