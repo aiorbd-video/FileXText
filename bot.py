@@ -301,7 +301,7 @@ def get_app_details(filename):
     )
 
 # ==========================================
-# EXPIRY PARSER
+# EXPIRY PARSER (BUG FIXED FOR "2d" FORMAT)
 # ==========================================
 def parse_expiry(text):
     if not text:
@@ -314,22 +314,16 @@ def parse_expiry(text):
 
     value = int(nums[0])
 
-    if any(k in text for k in ["day", "দিন"]):
+    # 🌟 "d", "w", "m" অ্যাড করা হয়েছে যেন বাটন ক্লিকের ডেটা ঠিকমতো বুঝতে পারে
+    if any(k in text for k in ["day", "দিন", "d"]):
         return utc_now() + timedelta(days=value), value
-    if any(k in text for k in ["week", "সপ্তাহ"]):
+    if any(k in text for k in ["week", "সপ্তাহ", "w"]):
         return utc_now() + timedelta(days=value * 7), value * 7
-    if any(k in text for k in ["month", "মাস"]):
+    if any(k in text for k in ["month", "মাস", "m"]):
         return utc_now() + timedelta(days=value * 30), value * 30
 
     return None, None
 
-def calculate_remaining_days(expiry_date):
-    if not expiry_date:
-        return None
-    seconds_left = (to_utc(expiry_date) - utc_now()).total_seconds()
-    if seconds_left <= 0:
-        return 0
-    return math.ceil(seconds_left / 86400)
 
 # ==========================================
 # PING ENGINE
