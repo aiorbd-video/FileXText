@@ -485,6 +485,8 @@ async def generate_ai_caption(file_info):
     if admin_note and ("অ্যাডমিন নোট" not in intro):
         intro += f"\n\n💡 <b>অ্যাডমিন নোট:</b> {admin_note}"
 
+        # ... (আগের কোড ঠিক থাকবে)
+    
     random_cta = random.choice([
         "📺 নতুন ফাইল পেতে চ্যানেলটি সাবস্ক্রাইব করুন!",
         "🚀 প্রতিদিন নতুন কনফিগ পেতে আমাদের সাথে থাকুন!",
@@ -492,6 +494,14 @@ async def generate_ai_caption(file_info):
         "⚡ প্রতিদিন ফ্রেশ সার্ভার আপডেট পেতে Join করুন!",
         "💎 আরো Exclusive Config এর জন্য Subscribe করুন!",
     ])
+
+    # 🌟 নতুন অ্যাড করা ডাউনলোড নিয়মাবলি 🌟
+    download_instruction = (
+        "📥 <b>কীভাবে কনফিগ ডাউনলোড করবেন:</b>\n"
+        "১. নিচের <b>📥 Direct Download</b> বাটনে ক্লিক করুন।\n"
+        "২. বট ওপেন হলে <b>Start</b> বাটনে চাপ দিন, ফাইল পেয়ে যাবেন!\n"
+        "৩. অথবা <b>🌐 Visit Website</b> এ গিয়ে সরাসরি ডাউনলোড করতে পারেন।\n\n"
+    )
 
     return (
         f"{intro}\n\n"
@@ -507,10 +517,12 @@ async def generate_ai_caption(file_info):
         f"┣ 🌍 <b>সার্ভার:</b> <b>{file_info.get('server') or 'Auto Premium'}</b>{expiry_text}\n"
         f"┣ 📊 <b>কোয়ালিটি:</b> {quality}\n"
         f"┗ ⚡ <b>সার্ভার পিং:</b> {ping_status}</blockquote>\n\n"
+        f"{download_instruction}"  # 🌟 এখানে ডাউনলোড নিয়মাবলি যুক্ত করা হয়েছে
         f"{random_cta}\n\n"
         f"📺 <b>Subscribe Our YouTube Channel:</b>\n"
         f"👉 <a href='{YOUTUBE_CHANNEL}'><b>It's Me Ratul</b></a>\n"
     )
+
 
 # ==========================================
 # STARTUP HEALTH CHECK + MIGRATION (UPDATED FOR INDEX CONFLICT)
