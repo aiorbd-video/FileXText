@@ -1735,6 +1735,8 @@ async def post_single_file(
                         document=file_id,
                         caption=caption,
                         parse_mode="HTML",
+                        # 🌟 ফাইলের নিচের প্রিভিউ বন্ধ করার জন্য (টেলিগ্রামের নতুন ভার্সন অনুযায়ী)
+                        link_preview_options={"is_disabled": True}, 
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("🌐 Visit Website", url=web_link)]
                         ])
@@ -1747,7 +1749,8 @@ async def post_single_file(
                         chat_id=channel_id,
                         text=caption,
                         parse_mode="HTML",
-                        disable_web_page_preview=False,
+                        # 🌟 ভিডিও/লিংক প্রিভিউ বন্ধ করার জন্য
+                        link_preview_options={"is_disabled": True},
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("🌐 Visit Website", url=web_link)]
                         ])
@@ -1761,7 +1764,8 @@ async def post_single_file(
                         chat_id=channel_id,
                         text=caption,
                         parse_mode="HTML",
-                        disable_web_page_preview=False,
+                        # 🌟 ভিডিও/লিংক প্রিভিউ বন্ধ করার জন্য
+                        link_preview_options={"is_disabled": True},
                         reply_markup=InlineKeyboardMarkup([
                             [
                                 InlineKeyboardButton("📥 Direct Download", url=direct_link),
@@ -1808,7 +1812,6 @@ async def post_single_file(
         await files_col.update_one({"uid": file_doc["uid"]}, {"$set": update_payload})
         await log_analytics("post_created", {"uid": file_doc["uid"], "repost_mode": repost_mode})
 
-        # শুধুমাত্র প্রথমবার পোস্ট হলে এডমিনকে রিপোর্ট দিবে
         if not repost_mode:
             report = (
                 "📡 <b>POST REPORT</b>\n"
@@ -1830,6 +1833,7 @@ async def post_single_file(
             parse_mode="HTML",
         )
         return False
+
 
 
 # ==========================================
