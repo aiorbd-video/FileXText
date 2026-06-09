@@ -485,7 +485,7 @@ async def generate_ai_caption(file_info):
     if admin_note and ("অ্যাডমিন নোট" not in intro):
         intro += f"\n\n💡 <b>অ্যাডমিন নোট:</b> {admin_note}"
 
-        # ... (আগের কোড ঠিক থাকবে)
+    # ... (আগের কোড ঠিক থাকবে)
     
     random_cta = random.choice([
         "📺 নতুন ফাইল পেতে চ্যানেলটি সাবস্ক্রাইব করুন!",
@@ -495,9 +495,10 @@ async def generate_ai_caption(file_info):
         "💎 আরো Exclusive Config এর জন্য Subscribe করুন!",
     ])
 
-    # 🌟 নতুন অ্যাড করা ডাউনলোড নিয়মাবলি 🌟
+    # 🌟 ভিডিও লিংক সহ ডাউনলোড নিয়মাবলি 🌟
     download_instruction = (
-        "📥 <b>কীভাবে কনফিগ ডাউনলোড করবেন:</b>\n"
+        "📥 <b>কীভাবে কনফিগ ডাউনলোড করবেন?</b>\n"
+        "🎥 বুঝতে সমস্যা হলে ভিডিওটি দেখুন: <a href='https://t.me/itsmeratul/1289'><b>ভিডিও টিউটোরিয়াল 🎬</b></a>\n\n"
         "১. নিচের <b>📥 Direct Download</b> বাটনে ক্লিক করুন।\n"
         "২. বট ওপেন হলে <b>Start</b> বাটনে চাপ দিন, ফাইল পেয়ে যাবেন!\n"
         "৩. অথবা <b>🌐 Visit Website</b> এ গিয়ে সরাসরি ডাউনলোড করতে পারেন।\n\n"
@@ -517,11 +518,12 @@ async def generate_ai_caption(file_info):
         f"┣ 🌍 <b>সার্ভার:</b> <b>{file_info.get('server') or 'Auto Premium'}</b>{expiry_text}\n"
         f"┣ 📊 <b>কোয়ালিটি:</b> {quality}\n"
         f"┗ ⚡ <b>সার্ভার পিং:</b> {ping_status}</blockquote>\n\n"
-        f"{download_instruction}"  # 🌟 এখানে ডাউনলোড নিয়মাবলি যুক্ত করা হয়েছে
+        f"{download_instruction}"  # 🌟 ভিডিও লিংক সহ ইনস্ট্রাকশন এখানে যুক্ত হবে
         f"{random_cta}\n\n"
         f"📺 <b>Subscribe Our YouTube Channel:</b>\n"
         f"👉 <a href='{YOUTUBE_CHANNEL}'><b>It's Me Ratul</b></a>\n"
     )
+
 
 
 # ==========================================
