@@ -1735,8 +1735,8 @@ async def post_single_file(
                         document=file_id,
                         caption=caption,
                         parse_mode="HTML",
-                        # 🌟 ফাইলের নিচের প্রিভিউ বন্ধ করার জন্য (টেলিগ্রামের নতুন ভার্সন অনুযায়ী)
-                        link_preview_options={"is_disabled": True}, 
+                        # 🌟 পুরোনো ভার্সনের জন্য প্রিভিউ বন্ধ করার সঠিক নিয়ম
+                        disable_web_page_preview=True, 
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("🌐 Visit Website", url=web_link)]
                         ])
@@ -1750,7 +1750,7 @@ async def post_single_file(
                         text=caption,
                         parse_mode="HTML",
                         # 🌟 ভিডিও/লিংক প্রিভিউ বন্ধ করার জন্য
-                        link_preview_options={"is_disabled": True},
+                        disable_web_page_preview=True,
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("🌐 Visit Website", url=web_link)]
                         ])
@@ -1765,7 +1765,7 @@ async def post_single_file(
                         text=caption,
                         parse_mode="HTML",
                         # 🌟 ভিডিও/লিংক প্রিভিউ বন্ধ করার জন্য
-                        link_preview_options={"is_disabled": True},
+                        disable_web_page_preview=True,
                         reply_markup=InlineKeyboardMarkup([
                             [
                                 InlineKeyboardButton("📥 Direct Download", url=direct_link),
